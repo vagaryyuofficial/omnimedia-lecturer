@@ -1,18 +1,30 @@
 import type { LanguageCode } from "./academy-data";
 
+export type SpeechProviderId = "gemini" | "qwen" | "fish" | "openai";
+export type SpeechConnection = {
+  provider: SpeechProviderId;
+  apiKey: string;
+  model?: string;
+  region?: "international" | "china";
+  voiceId?: string;
+};
+export type SpeechSessionState = {
+  activeProvider: SpeechProviderId | null;
+  connections: Partial<Record<SpeechProviderId, SpeechConnection>>;
+};
 export type VoiceProfile = {
   role: string;
   cloudVoice: string;
   geminiVoice: string;
+  qwenVoice: string;
+  openaiVoice: string;
   locale: string;
 };
-
 export type AudioCapability = {
-  mode: "gemini" | "openai" | "external" | "device";
+  mode: SpeechProviderId | "external" | "device";
   cloudReady: boolean;
   label: string;
 };
-
 export type PlaybackInfo = {
   engine: "neural" | "device" | "stopped";
   voice: string;
@@ -20,29 +32,31 @@ export type PlaybackInfo = {
   sampleRate?: number;
 };
 
-const VOICE_PROFILES: Record<LanguageCode, VoiceProfile> = {
-  CN: { role: "中文讲师", cloudVoice: "Marin", geminiVoice: "Kore", locale: "zh-CN" },
-  EN: { role: "English Lecturer", cloudVoice: "Cedar", geminiVoice: "Puck", locale: "en-US" },
-  FR: { role: "Professeure", cloudVoice: "Coral", geminiVoice: "Charon", locale: "fr-FR" },
-  DE: { role: "Dozent", cloudVoice: "Sage", geminiVoice: "Fenrir", locale: "de-DE" },
+const PROVIDER_LABELS: Record<SpeechProviderId, string> = {
+  gemini: "Gemini 原生语音",
+  qwen: "Qwen3 多语语音",
+  fish: "Fish Audio S2 Pro",
+  openai: "OpenAI 原生语音",
 };
-
-const GEMINI_SESSION_KEY = "omnimedia-gemini-api-key-session-v1";
-
+const VOICE_PROFILES: Record<LanguageCode, VoiceProfile> = {
+  CN: { role: "中文讲师", cloudVoice: "Marin", geminiVoice: "Kore", qwenVoice: "Serena", openaiVoice: "marin", locale: "zh-CN" },
+  EN: { role: "English Lecturer", cloudVoice: "Cedar", geminiVoice: "Puck", qwenVoice: "Jennifer", openaiVoice: "cedar", locale: "en-US" },
+  FR: { role: "Professeure", cloudVoice: "Coral", geminiVoice: "Charon", qwenVoice: "Emilien", openaiVoice: "coral", locale: "fr-FR" },
+  DE: { role: "Dozent", cloudVoice: "Sage", geminiVoice: "Fenrir", qwenVoice: "Lenn", openaiVoice: "sage", locale: "de-DE" },
+};
+const SPEECH_SESSION_KEY = "omnimedia-speech-connections-session-v2";
+const LEGACY_GEMINI_SESSION_KEY = "omnimedia-gemini-api-key-session-v1";
 const PREFERRED_DEVICE_VOICES: Record<LanguageCode, string[]> = {
   CN: ["Tingting", "Ting-Ting", "Meijia", "Sin-ji", "Xiaoxiao"],
   EN: ["Ava", "Samantha", "Serena", "Daniel", "Karen", "Moira"],
   FR: ["Audrey", "Amélie", "Aurelie", "Thomas", "Marie"],
   DE: ["Anna", "Petra", "Markus", "Yannick"],
 };
-
 const NOVELTY_VOICE = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Pipe Organ|Trinoids|Whisper|Zarvox/i;
 
 class LruCache<T> {
   private values = new Map<string, T>();
-
   constructor(private readonly limit = 24) {}
-
   get(key: string) {
     const value = this.values.get(key);
     if (!value) return undefined;
@@ -50,7 +64,6 @@ class LruCache<T> {
     this.values.set(key, value);
     return value;
   }
-
   set(key: string, value: T) {
     this.values.delete(key);
     this.values.set(key, value);
@@ -61,18 +74,8 @@ class LruCache<T> {
   }
 }
 
-type CachedAudio = {
-  buffer: AudioBuffer;
-  engine: string;
-  voice: string;
-  sampleRate: number;
-};
-
-type SpeechChunk = {
-  text: string;
-  language: LanguageCode;
-};
-
+type CachedAudio = { buffer: AudioBuffer; engine: string; voice: string; sampleRate: number };
+type SpeechChunk = { text: string; language: LanguageCode };
 let context: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let currentKey: string | null = null;
@@ -89,11 +92,7 @@ function getContext() {
 function stopCurrent() {
   if (currentSource) {
     currentSource.onended = null;
-    try {
-      currentSource.stop();
-    } catch {
-      // The source may already have ended.
-    }
+    try { currentSource.stop(); } catch { /* It may already have ended. */ }
     currentSource = null;
   }
   if (currentPauseTimer !== null) {
@@ -109,10 +108,10 @@ function stopCurrent() {
   currentKey = null;
 }
 
-function decodePcm16(bytes: ArrayBuffer, audioContext: AudioContext) {
+function decodePcm16(bytes: ArrayBuffer, audioContext: AudioContext, sampleRate = 24_000) {
   const sampleCount = Math.floor(bytes.byteLength / 2);
   const view = new DataView(bytes);
-  const audioBuffer = audioContext.createBuffer(1, sampleCount, 24_000);
+  const audioBuffer = audioContext.createBuffer(1, sampleCount, sampleRate);
   const channel = audioBuffer.getChannelData(0);
   for (let index = 0; index < sampleCount; index += 1) {
     channel[index] = view.getInt16(index * 2, true) / 32_768;
@@ -120,25 +119,102 @@ function decodePcm16(bytes: ArrayBuffer, audioContext: AudioContext) {
   return audioBuffer;
 }
 
-function readSessionGeminiApiKey() {
-  if (typeof window === "undefined") return "";
-  try {
-    return window.sessionStorage.getItem(GEMINI_SESSION_KEY)?.trim() || "";
-  } catch {
-    return "";
-  }
+function emptySpeechState(): SpeechSessionState {
+  return { activeProvider: null, connections: {} };
 }
 
-async function loadAudio(text: string, language: LanguageCode, geminiApiKey = "") {
-  const key = `${geminiApiKey ? "gemini" : "service"}:${language}:${text}`;
+export function getSessionSpeechState(): SpeechSessionState {
+  if (typeof window === "undefined") return emptySpeechState();
+  try {
+    const raw = window.sessionStorage.getItem(SPEECH_SESSION_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as SpeechSessionState;
+      return { activeProvider: parsed.activeProvider || null, connections: parsed.connections || {} };
+    }
+    const legacyKey = window.sessionStorage.getItem(LEGACY_GEMINI_SESSION_KEY)?.trim();
+    if (legacyKey) {
+      const migrated: SpeechSessionState = {
+        activeProvider: "gemini",
+        connections: { gemini: { provider: "gemini", apiKey: legacyKey, model: "gemini-3.1-flash-tts-preview" } },
+      };
+      window.sessionStorage.setItem(SPEECH_SESSION_KEY, JSON.stringify(migrated));
+      window.sessionStorage.removeItem(LEGACY_GEMINI_SESSION_KEY);
+      return migrated;
+    }
+  } catch {
+    // Session storage can be unavailable in strict private browsing.
+  }
+  return emptySpeechState();
+}
+
+function writeSpeechState(state: SpeechSessionState) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(SPEECH_SESSION_KEY, JSON.stringify(state));
+  knownCapability = state.activeProvider
+    ? { mode: state.activeProvider, cloudReady: true, label: PROVIDER_LABELS[state.activeProvider] }
+    : null;
+}
+
+export function setSessionSpeechConnection(connection: SpeechConnection) {
+  const apiKey = connection.apiKey.trim();
+  if (!apiKey) throw new Error("请输入 API Key。");
+  const state = getSessionSpeechState();
+  writeSpeechState({
+    activeProvider: connection.provider,
+    connections: { ...state.connections, [connection.provider]: { ...connection, apiKey } },
+  });
+}
+
+export function clearSessionSpeechConnection(provider: SpeechProviderId) {
+  const state = getSessionSpeechState();
+  const connections = { ...state.connections };
+  delete connections[provider];
+  const remaining = Object.keys(connections)[0] as SpeechProviderId | undefined;
+  writeSpeechState({
+    activeProvider: state.activeProvider === provider ? remaining || null : state.activeProvider,
+    connections,
+  });
+  stopCurrent();
+}
+
+export function setActiveSpeechProvider(provider: SpeechProviderId) {
+  const state = getSessionSpeechState();
+  if (!state.connections[provider]) throw new Error("请先连接这个语音服务。");
+  writeSpeechState({ ...state, activeProvider: provider });
+  stopCurrent();
+}
+
+export function speechProviderLabel(provider: SpeechProviderId) {
+  return PROVIDER_LABELS[provider];
+}
+
+export function voiceNameForConnection(language: LanguageCode, connection?: SpeechConnection) {
+  const profile = VOICE_PROFILES[language];
+  if (!connection) return "自动选择设备最佳声线";
+  if (connection.provider === "gemini") return profile.geminiVoice;
+  if (connection.provider === "qwen") return profile.qwenVoice;
+  if (connection.provider === "openai") return profile.openaiVoice;
+  return connection.voiceId?.trim() || "S2 Pro 默认声线";
+}
+
+async function loadAudio(text: string, language: LanguageCode, connection?: SpeechConnection) {
+  const providerKey = connection
+    ? `${connection.provider}:${connection.model || "default"}:${connection.region || "default"}:${connection.voiceId || "default"}`
+    : "service";
+  const key = `${providerKey}:${language}:${text}`;
   const cached = cache.get(key);
   if (cached) return cached;
-
   const response = await fetch("/api/tts", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(geminiApiKey ? { "X-Gemini-API-Key": geminiApiKey } : {}),
+      ...(connection ? {
+        "X-TTS-Provider": connection.provider,
+        "X-TTS-API-Key": connection.apiKey,
+        ...(connection.model ? { "X-TTS-Model": connection.model } : {}),
+        ...(connection.region ? { "X-TTS-Region": connection.region } : {}),
+        ...(connection.voiceId ? { "X-TTS-Voice-ID": connection.voiceId } : {}),
+      } : {}),
     },
     body: JSON.stringify({ text, language }),
   });
@@ -147,23 +223,21 @@ async function loadAudio(text: string, language: LanguageCode, geminiApiKey = ""
     try {
       const error = await response.json() as { message?: string };
       if (error.message) message = error.message;
-    } catch {
-      // Keep the safe user-facing message.
-    }
+    } catch { /* Keep the safe message. */ }
     throw new Error(message);
   }
-
   const bytes = await response.arrayBuffer();
   const audioContext = getContext();
   const contentType = response.headers.get("content-type") || "";
-  const rawPcm = response.headers.get("x-audio-encoding") === "signed-int16-little-endian";
-  const buffer = rawPcm || contentType.includes("pcm") || contentType.includes("octet-stream")
-    ? decodePcm16(bytes, audioContext)
+  const sampleRate = Number(response.headers.get("x-audio-sample-rate")) || 24_000;
+  const rawPcm = response.headers.get("x-audio-encoding") === "signed-int16-little-endian" || contentType.includes("pcm");
+  const buffer = rawPcm
+    ? decodePcm16(bytes, audioContext, sampleRate)
     : await audioContext.decodeAudioData(bytes.slice(0));
   const result = {
     buffer,
     engine: response.headers.get("x-tts-engine") || "neural",
-    voice: response.headers.get("x-tts-voice") || VOICE_PROFILES[language].cloudVoice,
+    voice: response.headers.get("x-tts-voice") || voiceNameForConnection(language, connection),
     sampleRate: Number(response.headers.get("x-audio-sample-rate")) || buffer.sampleRate,
   };
   cache.set(key, result);
@@ -194,20 +268,15 @@ function splitLongChunk(value: string, maxLength = 180) {
 }
 
 function speechChunks(text: string, baseLanguage: LanguageCode): SpeechChunk[] {
-  const normalized = text
-    .replace(/\s+/g, " ")
-    .replace(/([。！？!?；;：:])(?=\S)/g, "$1 ")
-    .trim();
+  const normalized = text.replace(/\s+/g, " ").replace(/([。！？!?；;：:])(?=\S)/g, "$1 ").trim();
   const sentences = normalized.match(/[^。！？!?；;：:]+[。！？!?；;：:]?/g) || [normalized];
   const chunks: SpeechChunk[] = [];
-
   for (const sentence of sentences) {
     for (const piece of splitLongChunk(sentence.trim())) {
       if (baseLanguage !== "CN") {
         if (piece) chunks.push({ text: piece, language: baseLanguage });
         continue;
       }
-
       const parts = piece.split(/([A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß][A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß'’\- ]{1,80})/g);
       for (const part of parts) {
         const value = part.trim();
@@ -224,7 +293,6 @@ async function loadDeviceVoices() {
   if (!("speechSynthesis" in window)) return [];
   const immediate = window.speechSynthesis.getVoices();
   if (immediate.length) return immediate;
-
   return new Promise<SpeechSynthesisVoice[]>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -250,19 +318,17 @@ function scoreVoice(voice: SpeechSynthesisVoice, language: LanguageCode) {
   if (/premium|enhanced|natural|neural/i.test(searchable)) score += 45;
   if (voice.localService) score += 10;
   if (voice.default) score += 4;
-  const preferredIndex = PREFERRED_DEVICE_VOICES[language]
-    .findIndex((name) => voice.name.toLowerCase().includes(name.toLowerCase()));
+  const preferredIndex = PREFERRED_DEVICE_VOICES[language].findIndex((name) => voice.name.toLowerCase().includes(name.toLowerCase()));
   if (preferredIndex >= 0) score += 35 - preferredIndex * 3;
   if (NOVELTY_VOICE.test(voice.name)) score -= 200;
   return score;
 }
 
 function selectDeviceVoice(voices: SpeechSynthesisVoice[], language: LanguageCode) {
-  const ranked = [...voices]
+  return [...voices]
     .map((voice) => ({ voice, score: scoreVoice(voice, language) }))
     .filter((entry) => entry.score > -1_000)
-    .sort((left, right) => right.score - left.score);
-  return ranked[0]?.voice;
+    .sort((left, right) => right.score - left.score)[0]?.voice;
 }
 
 function utteranceSettings(language: LanguageCode) {
@@ -272,20 +338,13 @@ function utteranceSettings(language: LanguageCode) {
   return { rate: 0.91, pitch: 0.99 };
 }
 
-async function speakOnDevice(
-  text: string,
-  language: LanguageCode,
-  key: string,
-  onEnd?: () => void,
-): Promise<PlaybackInfo> {
+async function speakOnDevice(text: string, language: LanguageCode, key: string, onEnd?: () => void): Promise<PlaybackInfo> {
   if (!("speechSynthesis" in window)) throw new Error("speech unsupported");
   const voices = await loadDeviceVoices();
   if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
-
   const chunks = speechChunks(text, language);
   const primaryVoice = selectDeviceVoice(voices, language);
   let index = 0;
-
   const finish = () => {
     if (currentKey !== key) return;
     currentKey = null;
@@ -293,16 +352,10 @@ async function speakOnDevice(
     currentPauseTimer = null;
     onEnd?.();
   };
-
   const speakNext = () => {
     if (currentKey !== key) return;
-    const chunk = chunks[index];
-    index += 1;
-    if (!chunk) {
-      finish();
-      return;
-    }
-
+    const chunk = chunks[index++];
+    if (!chunk) return finish();
     const utterance = new SpeechSynthesisUtterance(chunk.text);
     const profile = VOICE_PROFILES[chunk.language];
     const settings = utteranceSettings(chunk.language);
@@ -322,39 +375,28 @@ async function speakOnDevice(
     currentUtterance = utterance;
     window.speechSynthesis.speak(utterance);
   };
-
   speakNext();
-  return {
-    engine: "device",
-    voice: primaryVoice?.name || `系统默认 ${VOICE_PROFILES[language].locale}`,
-    label: "设备增强声线",
-  };
+  return { engine: "device", voice: primaryVoice?.name || `系统默认 ${VOICE_PROFILES[language].locale}`, label: "设备增强声线" };
 }
 
-export async function playSpeech(options: {
-  text: string;
-  language: LanguageCode;
-  onEnd?: () => void;
-}): Promise<PlaybackInfo> {
+export async function playSpeech(options: { text: string; language: LanguageCode; onEnd?: () => void }): Promise<PlaybackInfo> {
   const spokenText = options.text.trim();
-  const key = `${options.language}:${spokenText}`;
+  const session = getSessionSpeechState();
+  const connection = session.activeProvider ? session.connections[session.activeProvider] : undefined;
+  const key = `${connection?.provider || "device"}:${options.language}:${spokenText}`;
   if (!spokenText) return { engine: "stopped", voice: "", label: "已停止" };
   if (currentKey === key) {
     stopCurrent();
     options.onEnd?.();
     return { engine: "stopped", voice: "", label: "已停止" };
   }
-
   stopCurrent();
   currentKey = key;
-  const geminiApiKey = readSessionGeminiApiKey();
-  if (!geminiApiKey && knownCapability?.mode === "device") {
-    return speakOnDevice(spokenText, options.language, key, options.onEnd);
-  }
+  if (!connection && knownCapability?.mode === "device") return speakOnDevice(spokenText, options.language, key, options.onEnd);
   const audioContext = getContext();
   const resume = audioContext.resume().catch(() => undefined);
   try {
-    const audio = await loadAudio(spokenText, options.language, geminiApiKey);
+    const audio = await loadAudio(spokenText, options.language, connection);
     if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
     await resume;
     const source = audioContext.createBufferSource();
@@ -367,19 +409,10 @@ export async function playSpeech(options: {
     };
     currentSource = source;
     source.start();
-    return {
-      engine: "neural",
-      voice: audio.voice,
-      label: audio.engine === "gemini"
-        ? "Gemini 原生语音"
-        : audio.engine === "openai"
-          ? "AI 神经原声"
-          : "外部神经原声",
-      sampleRate: audio.sampleRate,
-    };
+    return { engine: "neural", voice: audio.voice, label: connection ? PROVIDER_LABELS[connection.provider] : "AI 神经原声", sampleRate: audio.sampleRate };
   } catch (error) {
     if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
-    if (geminiApiKey) {
+    if (connection) {
       stopCurrent();
       throw error;
     }
@@ -387,35 +420,13 @@ export async function playSpeech(options: {
   }
 }
 
-export function stopSpeech() {
-  stopCurrent();
-}
-
-export function voiceProfileForLanguage(language: LanguageCode) {
-  return VOICE_PROFILES[language];
-}
-
-export function hasSessionGeminiApiKey() {
-  return Boolean(readSessionGeminiApiKey());
-}
-
-export function setSessionGeminiApiKey(value: string) {
-  if (typeof window === "undefined") return;
-  const normalized = value.trim();
-  if (!normalized) throw new Error("请输入 Gemini API Key。");
-  window.sessionStorage.setItem(GEMINI_SESSION_KEY, normalized);
-  knownCapability = { mode: "gemini", cloudReady: true, label: "Gemini 原生语音" };
-}
-
-export function clearSessionGeminiApiKey() {
-  if (typeof window !== "undefined") window.sessionStorage.removeItem(GEMINI_SESSION_KEY);
-  stopCurrent();
-  knownCapability = null;
-}
+export function stopSpeech() { stopCurrent(); }
+export function voiceProfileForLanguage(language: LanguageCode) { return VOICE_PROFILES[language]; }
 
 export async function getAudioCapability(): Promise<AudioCapability> {
-  if (readSessionGeminiApiKey()) {
-    knownCapability = { mode: "gemini", cloudReady: true, label: "Gemini 原生语音" };
+  const session = getSessionSpeechState();
+  if (session.activeProvider && session.connections[session.activeProvider]) {
+    knownCapability = { mode: session.activeProvider, cloudReady: true, label: PROVIDER_LABELS[session.activeProvider] };
     return knownCapability;
   }
   try {

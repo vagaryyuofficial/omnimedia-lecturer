@@ -123,3 +123,82 @@ test("returns a useful error when the user's Gemini quota is exhausted", async (
     globalThis.fetch = originalFetch;
   }
 });
+
+test("routes Qwen3 TTS through the selected region and returns the signed audio", async () => {
+  const originalFetch = globalThis.fetch;
+  const apiKey = "sk-qwen-user-owned-test-key-1234567890";
+  const audio = Buffer.from("qwen-audio-test");
+  const observed = [];
+
+  globalThis.fetch = async (input, init) => {
+    observed.push({ input: String(input), init });
+    if (observed.length === 1) {
+      return Response.json({ output: { audio: { url: "https://dashscope-result.oss-cn-beijing.aliyuncs.com/audio/test.mp3" } } });
+    }
+    return new Response(audio, { headers: { "Content-Type": "audio/mpeg" } });
+  };
+
+  try {
+    const response = await render("/api/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-TTS-Provider": "qwen",
+        "X-TTS-API-Key": apiKey,
+        "X-TTS-Model": "qwen3-tts-instruct-flash",
+        "X-TTS-Region": "china",
+      },
+      body: JSON.stringify({ text: "La langue éclaire le savoir.", language: "FR" }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-tts-engine"), "qwen");
+    assert.equal(response.headers.get("x-tts-voice"), "Emilien");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), audio);
+    assert.match(observed[0].input, /^https:\/\/dashscope\.aliyuncs\.com\//);
+    assert.equal(observed[0].init.headers.Authorization, `Bearer ${apiKey}`);
+    const body = JSON.parse(observed[0].init.body);
+    assert.equal(body.model, "qwen3-tts-instruct-flash");
+    assert.equal(body.input.language_type, "French");
+    assert.equal(body.input.voice, "Emilien");
+    assert.doesNotMatch(JSON.stringify([...response.headers]), new RegExp(apiKey));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("proxies Fish Audio S2 Pro with an optional reference voice", async () => {
+  const originalFetch = globalThis.fetch;
+  const apiKey = "fish-user-owned-test-key-1234567890";
+  const audio = Buffer.from("fish-audio-test");
+  let observedRequest;
+  globalThis.fetch = async (input, init) => {
+    observedRequest = { input: String(input), init };
+    return new Response(audio, { headers: { "Content-Type": "audio/mpeg" } });
+  };
+
+  try {
+    const response = await render("/api/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-TTS-Provider": "fish",
+        "X-TTS-API-Key": apiKey,
+        "X-TTS-Voice-ID": "public-reference-voice",
+      },
+      body: JSON.stringify({ text: "Sprache macht Wissen beweglich.", language: "DE" }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-tts-engine"), "fish");
+    assert.equal(response.headers.get("x-tts-voice"), "public-reference-voice");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), audio);
+    assert.equal(observedRequest.input, "https://api.fish.audio/v1/tts");
+    assert.equal(observedRequest.init.headers.Authorization, `Bearer ${apiKey}`);
+    assert.equal(observedRequest.init.headers.model, "s2-pro");
+    assert.equal(JSON.parse(observedRequest.init.body).reference_id, "public-reference-voice");
+    assert.doesNotMatch(JSON.stringify([...response.headers]), new RegExp(apiKey));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

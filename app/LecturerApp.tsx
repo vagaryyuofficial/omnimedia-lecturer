@@ -18,15 +18,20 @@ import {
   type VisualReference,
 } from "../lib/academy-data";
 import {
-  clearSessionGeminiApiKey,
+  clearSessionSpeechConnection,
   getAudioCapability,
-  hasSessionGeminiApiKey,
+  getSessionSpeechState,
   playSpeech,
-  setSessionGeminiApiKey,
+  setActiveSpeechProvider,
+  setSessionSpeechConnection,
+  speechProviderLabel,
   stopSpeech,
+  voiceNameForConnection,
   voiceProfileForLanguage,
   type AudioCapability,
   type PlaybackInfo,
+  type SpeechProviderId,
+  type SpeechSessionState,
 } from "../lib/audio-engine";
 import { parseLectureDsl, type InlineToken } from "../lib/dsl";
 import type { SubjectId, TeachingMode } from "../lib/prompts";
@@ -61,6 +66,78 @@ const LANGUAGE_META: Record<Exclude<LanguageCode, "CN">, {
   FR: { flag: "🇫🇷", name: "Français", color: "#585b9b" },
   DE: { flag: "🇩🇪", name: "Deutsch", color: "#a77728" },
 };
+
+const SPEECH_PROVIDERS: Array<{
+  id: SpeechProviderId;
+  name: string;
+  maker: string;
+  badge: string;
+  description: string;
+  note: string;
+  keyUrl: string;
+  keyAction: string;
+  models: Array<{ value: string; label: string }>;
+}> = [
+  {
+    id: "gemini",
+    name: "Gemini Speech",
+    maker: "Google AI",
+    badge: "可试用",
+    description: "最接近 AI Studio 的表达型朗读，支持指令控制语气与四语独立声线。",
+    note: "免费额度与可用地区由 Google 决定。",
+    keyUrl: "https://aistudio.google.com/api-keys",
+    keyAction: "前往 AI Studio 创建 Key",
+    models: [
+      { value: "gemini-3.1-flash-tts-preview", label: "Gemini 3.1 Flash TTS Preview" },
+      { value: "gemini-2.5-flash-preview-tts", label: "Gemini 2.5 Flash Preview TTS" },
+      { value: "gemini-2.5-pro-preview-tts", label: "Gemini 2.5 Pro Preview TTS" },
+    ],
+  },
+  {
+    id: "qwen",
+    name: "Qwen3 TTS",
+    maker: "Alibaba Cloud",
+    badge: "多语优先",
+    description: "中文稳定，并为英、法、德分别选择原生声线；适合术语、整句与课程正文。",
+    note: "百炼 Key 分中国站与国际站，必须选择 Key 所属地区。",
+    keyUrl: "https://modelstudio.console.alibabacloud.com/",
+    keyAction: "前往 Model Studio 获取 Key",
+    models: [
+      { value: "qwen3-tts-flash", label: "Qwen3 TTS Flash" },
+      { value: "qwen3-tts-instruct-flash", label: "Qwen3 TTS Instruct Flash" },
+    ],
+  },
+  {
+    id: "fish",
+    name: "Fish Audio",
+    maker: "Fish Audio",
+    badge: "拟人表达",
+    description: "S2 Pro 强调自然韵律与角色化表达，可选填公开或自有音色的 Reference ID。",
+    note: "托管 API 由 Fish Audio 计费；未填 Voice ID 时使用服务默认声线。",
+    keyUrl: "https://fish.audio/app/api-keys/",
+    keyAction: "前往 Fish Audio 获取 Key",
+    models: [{ value: "s2-pro", label: "Fish Audio S2 Pro" }],
+  },
+  {
+    id: "openai",
+    name: "OpenAI Speech",
+    maker: "OpenAI API",
+    badge: "高质量",
+    description: "支持自然指令式朗读与传统高清 TTS，可作为稳定的商业语音选项。",
+    note: "需要 OpenAI API 账户与可用余额，不属于免费服务。",
+    keyUrl: "https://platform.openai.com/api-keys",
+    keyAction: "前往 OpenAI 创建 Key",
+    models: [
+      { value: "gpt-4o-mini-tts", label: "GPT-4o mini TTS" },
+      { value: "tts-1-hd", label: "TTS-1 HD" },
+      { value: "tts-1", label: "TTS-1" },
+    ],
+  },
+];
+
+const DEFAULT_SPEECH_MODELS = Object.fromEntries(
+  SPEECH_PROVIDERS.map((provider) => [provider.id, provider.models[0].value]),
+) as Record<SpeechProviderId, string>;
 
 const DEFAULT_NOTE: Note = {
   id: "welcome",
@@ -148,10 +225,14 @@ export default function LecturerApp() {
   });
   const [lastPlayback, setLastPlayback] = useState<PlaybackInfo | null>(null);
   const [speechSettingsOpen, setSpeechSettingsOpen] = useState(false);
-  const [geminiKeyInput, setGeminiKeyInput] = useState("");
-  const [geminiConfigured, setGeminiConfigured] = useState(false);
-  const [geminiConnecting, setGeminiConnecting] = useState(false);
-  const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [speechSession, setSpeechSession] = useState<SpeechSessionState>({ activeProvider: null, connections: {} });
+  const [selectedSpeechProvider, setSelectedSpeechProvider] = useState<SpeechProviderId>("gemini");
+  const [speechKeyInput, setSpeechKeyInput] = useState("");
+  const [speechModel, setSpeechModel] = useState(DEFAULT_SPEECH_MODELS.gemini);
+  const [speechRegion, setSpeechRegion] = useState<"international" | "china">("international");
+  const [speechVoiceId, setSpeechVoiceId] = useState("");
+  const [speechConnecting, setSpeechConnecting] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
   const [curriculumOpen, setCurriculumOpen] = useState(false);
   const [curriculumLevel, setCurriculumLevel] = useState(0);
   const [activeTerm, setActiveTerm] = useState<ActiveTerm | null>(null);
@@ -167,6 +248,11 @@ export default function LecturerApp() {
   const lesson = LESSONS[subjectId];
   const currentCurriculum = CURRICULUM[subjectId];
   const activeNote = notes.find((note) => note.id === activeNoteId) || notes[0];
+  const activeSpeechConnection = speechSession.activeProvider
+    ? speechSession.connections[speechSession.activeProvider]
+    : undefined;
+  const selectedSpeechMeta = SPEECH_PROVIDERS.find((provider) => provider.id === selectedSpeechProvider) || SPEECH_PROVIDERS[0];
+  const selectedSpeechConnection = speechSession.connections[selectedSpeechProvider];
 
   const modeDsl = mode === "case"
     ? lesson.caseDsl
@@ -216,19 +302,33 @@ export default function LecturerApp() {
   }, [toast]);
 
   useEffect(() => {
-    if (speechSettingsOpen) return;
-    setGeminiKeyInput("");
-    setGeminiError(null);
-  }, [speechSettingsOpen]);
+    const frame = window.requestAnimationFrame(() => {
+      if (!speechSettingsOpen) {
+        setSpeechKeyInput("");
+        setSpeechError(null);
+        return;
+      }
+      const connection = getSessionSpeechState().connections[selectedSpeechProvider];
+      setSpeechKeyInput(connection?.apiKey || "");
+      setSpeechModel(connection?.model || DEFAULT_SPEECH_MODELS[selectedSpeechProvider]);
+      setSpeechRegion(connection?.region || "international");
+      setSpeechVoiceId(connection?.voiceId || "");
+      setSpeechError(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedSpeechProvider, speechSettingsOpen]);
 
   useEffect(() => {
     let active = true;
-    setGeminiConfigured(hasSessionGeminiApiKey());
-    void getAudioCapability().then((capability) => {
-      if (active) setAudioCapability(capability);
+    const frame = window.requestAnimationFrame(() => {
+      setSpeechSession(getSessionSpeechState());
+      void getAudioCapability().then((capability) => {
+        if (active) setAudioCapability(capability);
+      });
     });
     return () => {
       active = false;
+      window.cancelAnimationFrame(frame);
     };
   }, []);
 
@@ -320,39 +420,56 @@ export default function LecturerApp() {
     }
   }
 
-  async function connectGemini(event: FormEvent<HTMLFormElement>) {
+  async function connectSpeechProvider(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const value = geminiKeyInput.trim();
+    const value = speechKeyInput.trim();
     if (!value) return;
-    setGeminiConnecting(true);
-    setGeminiError(null);
+    const previousState = getSessionSpeechState();
+    const previousConnection = previousState.connections[selectedSpeechProvider];
+    setSpeechConnecting(true);
+    setSpeechError(null);
     try {
-      setSessionGeminiApiKey(value);
-      setGeminiConfigured(true);
-      setAudioCapability({ mode: "gemini", cloudReady: true, label: "Gemini 原生语音" });
+      setSessionSpeechConnection({
+        provider: selectedSpeechProvider,
+        apiKey: value,
+        model: speechModel,
+        ...(selectedSpeechProvider === "qwen" ? { region: speechRegion } : {}),
+        ...(selectedSpeechProvider === "fish" && speechVoiceId.trim() ? { voiceId: speechVoiceId.trim() } : {}),
+      });
+      setSpeechSession(getSessionSpeechState());
+      setAudioCapability(await getAudioCapability());
       const result = await playSpeech({ text: "知识为体，语言为用。", language: "CN" });
       setLastPlayback(result);
-      setGeminiKeyInput("");
-      setSpeechSettingsOpen(false);
-      setToast(`Gemini 已连接 · ${result.voice} · ${result.sampleRate || 24_000} Hz`);
+      setToast(`${speechProviderLabel(selectedSpeechProvider)} 已连接 · ${result.voice} · ${result.sampleRate || 24_000} Hz`);
     } catch (error) {
-      clearSessionGeminiApiKey();
-      setGeminiConfigured(false);
+      if (previousConnection) setSessionSpeechConnection(previousConnection);
+      else clearSessionSpeechConnection(selectedSpeechProvider);
+      if (previousState.activeProvider && previousState.connections[previousState.activeProvider]) {
+        setActiveSpeechProvider(previousState.activeProvider);
+      }
+      setSpeechSession(getSessionSpeechState());
       setAudioCapability(await getAudioCapability());
-      setGeminiError(error instanceof Error ? error.message : "无法连接 Gemini，请检查 Key。");
+      setSpeechError(error instanceof Error ? error.message : `无法连接 ${selectedSpeechMeta.name}，请检查 Key。`);
     } finally {
-      setGeminiConnecting(false);
+      setSpeechConnecting(false);
     }
   }
 
-  async function disconnectGemini() {
-    clearSessionGeminiApiKey();
-    setGeminiConfigured(false);
-    setGeminiKeyInput("");
-    setGeminiError(null);
+  async function disconnectSpeechProvider() {
+    clearSessionSpeechConnection(selectedSpeechProvider);
+    setSpeechSession(getSessionSpeechState());
+    setSpeechKeyInput("");
+    setSpeechError(null);
     setLastPlayback(null);
     setAudioCapability(await getAudioCapability());
-    setToast("已清除本次会话中的 Gemini Key");
+    setToast(`已清除本次会话中的 ${selectedSpeechMeta.name} Key`);
+  }
+
+  async function activateSpeechProvider(provider: SpeechProviderId) {
+    setActiveSpeechProvider(provider);
+    setSpeechSession(getSessionSpeechState());
+    setAudioCapability(await getAudioCapability());
+    setToast(`已切换到 ${speechProviderLabel(provider)}`);
   }
 
   async function inspectTerm(term: ActiveTerm) {
@@ -566,8 +683,8 @@ export default function LecturerApp() {
                 <header>
                   <span>真实多语声线</span>
                   <span className="voice-header-actions">
-                    <small>{audioCapability.mode === "gemini" ? "GEMINI TTS" : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
-                    <button type="button" onClick={() => { setGeminiError(null); setSpeechSettingsOpen(true); }}>{geminiConfigured ? "已连接" : "连接"}</button>
+                    <small>{speechSession.activeProvider ? `${speechSession.activeProvider.toUpperCase()} TTS` : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
+                    <button type="button" onClick={() => { setSpeechError(null); setSpeechSettingsOpen(true); }}>{Object.keys(speechSession.connections).length ? "管理" : "连接"}</button>
                   </span>
                 </header>
                 {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => {
@@ -577,13 +694,13 @@ export default function LecturerApp() {
                   return (
                     <button type="button" className={playingKey === sampleKey ? "playing" : ""} key={language} onClick={() => void speak(sample, language)}>
                       <span>{language}</span>
-                      <span className="voice-copy"><strong>{profile.role}</strong><small>{audioCapability.mode === "gemini" ? profile.geminiVoice : audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
+                      <span className="voice-copy"><strong>{profile.role}</strong><small>{activeSpeechConnection ? voiceNameForConnection(language, activeSpeechConnection) : audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
                       <i className="mini-wave"><b /><b /><b /></i>
                     </button>
                   );
                 })}
                 <p className={audioCapability.cloudReady ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : "分句朗读 · 跨语切换 · 真实声线检测"}</p>
-                {(audioCapability.mode === "openai" || audioCapability.mode === "gemini") && <p className="voice-disclosure">AI 生成语音 · 非真人录音</p>}
+                {audioCapability.cloudReady && <p className="voice-disclosure">AI 生成语音 · 非真人录音 · 使用者自备服务 Key</p>}
               </section>
 
               <section className="protocol-card">
@@ -644,41 +761,91 @@ export default function LecturerApp() {
       )}
 
       {speechSettingsOpen && (
-        <ModalShell label="连接自己的 Gemini 语音" onClose={() => setSpeechSettingsOpen(false)}>
-          <header className="modal-header gemini-modal-header">
-            <div><small>BRING YOUR OWN KEY · SESSION ONLY</small><h2>连接 Gemini 原生语音</h2><p>使用你自己的免费配额，启用 Kore / Puck / Charon / Fenrir 四语声线。</p></div>
+        <ModalShell label="多模型语音中心" onClose={() => setSpeechSettingsOpen(false)} wide>
+          <header className="modal-header speech-modal-header">
+            <div><small>VOICE PROVIDERS · SESSION ONLY</small><h2>多模型语音中心</h2><p>内容模型与语音引擎彼此独立；任选一个语音服务，整座学院立即切换。</p></div>
             <button type="button" onClick={() => setSpeechSettingsOpen(false)} aria-label="关闭">×</button>
           </header>
-          <div className="gemini-setup">
-            <section className={`gemini-connection-state ${geminiConfigured ? "connected" : ""}`}>
-              <span>{geminiConfigured ? "✓" : "◇"}</span>
-              <div><strong>{geminiConfigured ? "本次会话已连接" : "尚未连接 Gemini"}</strong><p>{geminiConfigured ? "所有朗读将优先使用你的 Gemini Key。" : "Key 不会写入仓库、笔记或永久浏览器存储。"}</p></div>
+          <div className="speech-hub">
+            <aside className="speech-provider-list">
+              <header><span>语音供应商</span><small>{Object.keys(speechSession.connections).length} CONNECTED</small></header>
+              {SPEECH_PROVIDERS.map((provider) => {
+                const connected = Boolean(speechSession.connections[provider.id]);
+                const active = speechSession.activeProvider === provider.id;
+                return (
+                  <button
+                    type="button"
+                    className={`${selectedSpeechProvider === provider.id ? "selected" : ""} ${active ? "active" : ""}`}
+                    key={provider.id}
+                    onClick={() => setSelectedSpeechProvider(provider.id)}
+                  >
+                    <span className={`provider-mark provider-${provider.id}`}>{provider.name.slice(0, 1)}</span>
+                    <span><strong>{provider.name}</strong><small>{provider.maker}</small></span>
+                    <i>{active ? "使用中" : connected ? "已连接" : provider.badge}</i>
+                  </button>
+                );
+              })}
+              <section className="model-only-note">
+                <span>LLM ≠ TTS</span>
+                <strong>DeepSeek / Kimi</strong>
+                <p>可用于生成课程内容，但官方 API 暂无直接语音输出；因此不伪装成语音引擎。</p>
+              </section>
+              <section className="model-only-note open-voice-note">
+                <span>OPEN WEIGHTS</span>
+                <strong>CosyVoice / F5-TTS</strong>
+                <p>开源权重仍需本地或云端部署。本应用坚持零模型部署，因此先接对应的托管语音 API。</p>
+              </section>
+            </aside>
+
+            <section className="speech-provider-panel">
+              <header className="speech-provider-intro">
+                <div><small>{selectedSpeechMeta.maker}</small><h3>{selectedSpeechMeta.name}</h3><p>{selectedSpeechMeta.description}</p></div>
+                <span>{selectedSpeechConnection ? speechSession.activeProvider === selectedSpeechProvider ? "正在使用" : "已连接" : selectedSpeechMeta.badge}</span>
+              </header>
+
+              <section className={`speech-connection-state ${selectedSpeechConnection ? "connected" : ""}`}>
+                <span>{selectedSpeechConnection ? "✓" : "◇"}</span>
+                <div><strong>{selectedSpeechConnection ? "本次会话已保存连接" : "等待连接你的账户"}</strong><p>{selectedSpeechConnection ? `模型：${selectedSpeechConnection.model || DEFAULT_SPEECH_MODELS[selectedSpeechProvider]}` : "密钥不会写入仓库、笔记或永久浏览器存储。"}</p></div>
+                {selectedSpeechConnection && speechSession.activeProvider !== selectedSpeechProvider && <button type="button" onClick={() => void activateSpeechProvider(selectedSpeechProvider)}>设为当前</button>}
+              </section>
+
+              <form className="speech-provider-form" onSubmit={(event) => void connectSpeechProvider(event)}>
+                <div className="speech-field-row">
+                  <label><span>语音模型</span><select value={speechModel} onChange={(event) => setSpeechModel(event.target.value)}>{selectedSpeechMeta.models.map((model) => <option value={model.value} key={model.value}>{model.label}</option>)}</select></label>
+                  {selectedSpeechProvider === "qwen" && (
+                    <label><span>Key 所属地区</span><select value={speechRegion} onChange={(event) => setSpeechRegion(event.target.value as "international" | "china")}><option value="international">国际站 · Singapore</option><option value="china">中国站 · Beijing</option></select></label>
+                  )}
+                </div>
+                {selectedSpeechProvider === "fish" && (
+                  <label className="speech-optional-field"><span>Voice Reference ID <i>可选</i></span><input value={speechVoiceId} onChange={(event) => setSpeechVoiceId(event.target.value)} placeholder="留空使用默认声线，或填写自有 / 公开音色 ID" autoComplete="off" spellCheck={false} /></label>
+                )}
+                <label className="speech-key-label" htmlFor="speech-api-key">{selectedSpeechMeta.name} API Key</label>
+                <div className="speech-key-field">
+                  <span>✦</span>
+                  <input
+                    id="speech-api-key"
+                    type="password"
+                    value={speechKeyInput}
+                    onChange={(event) => { setSpeechKeyInput(event.target.value); setSpeechError(null); }}
+                    placeholder={`粘贴 ${selectedSpeechMeta.name} 的 API Key`}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                {speechError && <p className="speech-error" role="alert">{speechError}</p>}
+                <p className="speech-privacy">密钥仅保存在当前标签页的 Session Storage 中，并通过 HTTPS 发送到本应用服务端后转发给所选供应商。关闭标签页或清除连接即删除。</p>
+                <p className="speech-provider-note">{selectedSpeechMeta.note}</p>
+                <div className="speech-actions">
+                  <a href={selectedSpeechMeta.keyUrl} target="_blank" rel="noreferrer">{selectedSpeechMeta.keyAction} ↗</a>
+                  <span>
+                    {selectedSpeechConnection && <button className="speech-disconnect" type="button" onClick={() => void disconnectSpeechProvider()}>清除连接</button>}
+                    <button className="speech-connect" type="submit" disabled={speechKeyInput.trim().length < 8 || speechConnecting}>{speechConnecting ? "正在验证并试听…" : selectedSpeechConnection ? "更新并试听" : "连接并试听"}</button>
+                  </span>
+                </div>
+              </form>
+
+              <footer className="speech-hub-footer"><span>PRIVACY</span><p>请勿朗读敏感、机密或个人信息。请求内容与用量政策由对应服务商决定，本应用不会代购额度。</p></footer>
             </section>
-            <form onSubmit={(event) => void connectGemini(event)}>
-              <label htmlFor="gemini-api-key">Gemini API Key</label>
-              <div className="gemini-key-field">
-                <span>✦</span>
-                <input
-                  id="gemini-api-key"
-                  type="password"
-                  value={geminiKeyInput}
-                  onChange={(event) => { setGeminiKeyInput(event.target.value); setGeminiError(null); }}
-                  placeholder="粘贴 AI Studio 中创建的 Key"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-              {geminiError && <p className="gemini-error" role="alert">{geminiError}</p>}
-              <p className="gemini-privacy">密钥仅保存在当前标签页会话中，并通过 HTTPS 发送到本应用服务端后转发给 Google。关闭标签页或点击“清除连接”即删除。</p>
-              <div className="gemini-actions">
-                <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer">前往 AI Studio 创建 Key ↗</a>
-                <span>
-                  {geminiConfigured && <button className="gemini-disconnect" type="button" onClick={() => void disconnectGemini()}>清除连接</button>}
-                  <button className="gemini-connect" type="submit" disabled={geminiKeyInput.trim().length < 20 || geminiConnecting}>{geminiConnecting ? "正在验证并试听…" : "连接并试听"}</button>
-                </span>
-              </div>
-            </form>
-            <footer><span>01</span><p>免费层内容可能用于改进 Google 产品，请勿朗读敏感、机密或个人信息。</p><span>02</span><p>免费额度、地区和年龄限制由 Google 决定；本应用不会代你购买服务。</p></footer>
           </div>
         </ModalShell>
       )}
