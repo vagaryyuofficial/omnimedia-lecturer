@@ -2,6 +2,11 @@
 
 一款开源的多模态、多语种学术学习平台。它采用 CLIL（Content and Language Integrated Learning，内容与语言整合学习）方法：用中文建立复杂概念，再通过英语、法语与德语术语、词源、语法和原声发音校准知识边界。
 
+[![MIT License](https://img.shields.io/badge/license-MIT-4f6f64.svg)](./LICENSE)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-5b7f67.svg)](https://nodejs.org/)
+
+在线体验：[omnimedia-lecturer.vagarywei.chatgpt.site](https://omnimedia-lecturer.vagarywei.chatgpt.site/)
+
 ![Omnimedia Lecturer social card](./public/og.png)
 
 ## 已实现
@@ -12,8 +17,9 @@
 - 中文主讲，EN / FR / DE 三语术语卡、词源与语法拆解
 - `{{术语|LANG}}` 行内术语与 `[[LANG: ...]]` 多语卡片 DSL 的前端解析
 - 可点击术语、单词和整句发音，以及定义、词源、语法、语义和例句深度弹窗
-- 24 kHz 单声道 PCM 解码、单例播放、重复点击停止和 24 项 LRU 内存缓存
-- 四语真实声线角色：中文 Marin、英语 Cedar、法语 Coral、德语 Sage；界面显示实际播放引擎与声线
+- 多模型语音中心：Gemini Speech、Qwen3 TTS、Fish Audio S2 Pro 与 OpenAI Speech 可独立连接和即时切换
+- 原始 PCM 与浏览器原生音频解码、单例播放、重复点击停止和 24 项 LRU 内存缓存
+- 四语独立声线策略；界面始终显示当前实际播放引擎与声线
 - 设备端自动等待声库加载、按音质评分选声、长句分段，并在中文段落内切换外语术语发音
 - 学术视觉画廊、来源卡片与可插拔的检索 grounding 数据
 - iPad / macOS 风格双栏备忘录，支持搜索、时间排序和 LocalStorage 自动保存
@@ -32,9 +38,9 @@ pnpm dev
 
 打开 `http://localhost:3000`。不创建 `.env.local` 也可以使用内置课程、课程树、视觉资料、术语报告、备忘录和设备朗读。
 
-## 可选：连接实时服务
+## 可选：连接实时内容与服务端语音
 
-项目不依赖 Gemini。三个通用 HTTP 端点均可独立实现，也可以只配置 OpenAI Speech API：
+三个通用 HTTP 端点均可独立实现，也可以为自有部署配置服务端 OpenAI Speech：
 
 ```dotenv
 LECTURER_TEXT_ENDPOINT=https://your-service.example/lecture
@@ -68,26 +74,24 @@ OPENAI_TTS_MODEL=gpt-4o-mini-tts
 }
 ```
 
-### 语音端点
+### 多模型语音中心
 
-#### 用户自带 Gemini Key
+右侧“真实多语声线”面板提供“管理”入口。使用者可以连接自己的服务账户并即时试听：
 
-右侧“真实多语声线”面板提供“连接”入口。用户可粘贴自己在 Google AI Studio 创建的 Gemini API Key，并立即试听：
+| 服务 | 适用方向 | 额外设置 |
+| --- | --- | --- |
+| Gemini Speech | 表达型朗读与四语独立声线 | 可选择 Gemini TTS 模型 |
+| Qwen3 TTS | 中文与英、法、德多语朗读 | 选择中国站或国际站 Key |
+| Fish Audio S2 Pro | 拟人韵律与角色化声音 | 可选 Voice Reference ID |
+| OpenAI Speech | 指令式朗读与通用高清 TTS | 可选择 Speech 模型 |
 
-- 中文：Kore
-- 英语：Puck
-- 法语：Charon
-- 德语：Fenrir
+API Key 只保存在当前标签页的 `sessionStorage`，关闭标签页即清除；它随同源 HTTPS 请求发送到 `/api/tts`，由服务端转发给所选供应商，不会写入仓库、笔记、LocalStorage 或服务端持久化存储。请只在自己信任的部署中输入 Key，并避免朗读敏感信息。
 
-Key 只保存在当前标签页的 `sessionStorage`，关闭标签页即清除；它随同源 HTTPS 请求发送到 `/api/tts`，由服务端转发给 Google，不会写入仓库、笔记、LocalStorage 或服务端持久化存储。用户应只在信任的部署中使用自己的 Key，并将 Key 限制为 Gemini API 专用。
+项目不会把 DeepSeek 或 Kimi 冒充成语音引擎：它们可以承担内容生成，但官方 API 没有直接 TTS。CosyVoice、F5-TTS 等开放权重仍需要本地或云端部署；本项目默认不部署模型，因此只连接可直接调用的托管语音 API。
 
-服务端默认调用 `gemini-3.1-flash-tts-preview`，可通过非敏感环境变量 `GEMINI_TTS_MODEL` 调整。Gemini 返回的 24 kHz 单声道 PCM 可直接进入现有 Web Audio 解码链路。无效 Key、地区限制和免费额度耗尽会显示明确错误，不会静默回退到设备语音。
+若配置 `LECTURER_SPEECH_ENDPOINT`，语音端点会收到 `text`、`language`、实际声线、角色、朗读指令、采样率和编码信息。它可返回原始 PCM，也可返回浏览器能够解码的 `audio/*` 文件。
 
-若配置 `LECTURER_SPEECH_ENDPOINT`，语音端点会收到 `text`、`language`、实际声线、角色、朗读指令、`sampleRate: 24000`、`channels: 1` 和 `encoding: signed-int16-little-endian`。它可返回原始 PCM（`audio/pcm` 或 `application/octet-stream`），也可返回浏览器能够解码的 `audio/*` 文件。
-
-若未配置通用端点但配置了 `OPENAI_API_KEY`，服务端会直接调用 OpenAI Speech API，输出 24 kHz PCM。密钥不会发送到浏览器。界面会明确披露播放的是 AI 生成语音，而不是真人录音。
-
-完全不配置云端语音时，应用会诚实标示“设备增强声线”，等待浏览器声库加载后选择当前语言下得分最高的本地声线，并对长句及中文中的外语片段分段朗读。最终音质仍取决于用户设备安装的系统声线。
+若未配置通用端点但配置了服务端 `OPENAI_API_KEY`，服务端会直接调用 OpenAI Speech API，密钥不会发送到浏览器。完全不配置云端语音时，应用会诚实标示“设备增强声线”，并选择当前设备中匹配语言的最佳本地声线。
 
 ### 术语端点
 
@@ -116,12 +120,12 @@ Key 只保存在当前标签页的 `sessionStorage`，关闭标签页即清除�
 ```text
 app/LecturerApp.tsx       学院界面、课程树、弹窗、备忘录与交互
 app/api/lecture/route.ts  厂商中性的实时讲师与视觉 grounding 适配器
-app/api/tts/route.ts      24 kHz PCM / 通用音频服务适配器
+app/api/tts/route.ts      Gemini / Qwen / Fish Audio / OpenAI 语音适配器
 app/api/term/route.ts     深度术语报告适配器
 lib/academy-data.ts       八大学科、三级课程、内置讲义与视觉资料
 lib/prompts.ts            CLIL 核心系统指令和八学科上下文
 lib/dsl.ts                行内术语与多语卡片 DSL 解析器
-lib/audio-engine.ts       单例播放、PCM 解码、LRU 缓存与设备语音兜底
+lib/audio-engine.ts       多服务会话、单例播放、音频解码、LRU 缓存与设备兜底
 app/globals.css           Apple / macOS 风格设计系统与响应式布局
 ```
 
@@ -134,6 +138,7 @@ app/globals.css           Apple / macOS 风格设计系统与响应式布局
 ## 安全与限制
 
 - 不要提交 `.env.local` 或真实访问令牌。
+- 浏览器会话中的自带 Key 由使用者自行管理；公开部署者不应记录代理请求头或请求正文。
 - 搜索 grounding 能提高时效性与可验证性，但不能代替人工编辑与专业审核。
 - 没有原声服务或请求失败时，应用使用设备语音。
 - 备忘录默认保存在浏览器 LocalStorage，不进行云同步。
