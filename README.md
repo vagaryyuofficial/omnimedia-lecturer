@@ -70,6 +70,19 @@ OPENAI_TTS_MODEL=gpt-4o-mini-tts
 
 ### 语音端点
 
+#### 用户自带 Gemini Key
+
+右侧“真实多语声线”面板提供“连接”入口。用户可粘贴自己在 Google AI Studio 创建的 Gemini API Key，并立即试听：
+
+- 中文：Kore
+- 英语：Puck
+- 法语：Charon
+- 德语：Fenrir
+
+Key 只保存在当前标签页的 `sessionStorage`，关闭标签页即清除；它随同源 HTTPS 请求发送到 `/api/tts`，由服务端转发给 Google，不会写入仓库、笔记、LocalStorage 或服务端持久化存储。用户应只在信任的部署中使用自己的 Key，并将 Key 限制为 Gemini API 专用。
+
+服务端默认调用 `gemini-3.1-flash-tts-preview`，可通过非敏感环境变量 `GEMINI_TTS_MODEL` 调整。Gemini 返回的 24 kHz 单声道 PCM 可直接进入现有 Web Audio 解码链路。无效 Key、地区限制和免费额度耗尽会显示明确错误，不会静默回退到设备语音。
+
 若配置 `LECTURER_SPEECH_ENDPOINT`，语音端点会收到 `text`、`language`、实际声线、角色、朗读指令、`sampleRate: 24000`、`channels: 1` 和 `encoding: signed-int16-little-endian`。它可返回原始 PCM（`audio/pcm` 或 `application/octet-stream`），也可返回浏览器能够解码的 `audio/*` 文件。
 
 若未配置通用端点但配置了 `OPENAI_API_KEY`，服务端会直接调用 OpenAI Speech API，输出 24 kHz PCM。密钥不会发送到浏览器。界面会明确披露播放的是 AI 生成语音，而不是真人录音。

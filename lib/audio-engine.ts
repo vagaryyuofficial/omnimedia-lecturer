@@ -3,11 +3,12 @@ import type { LanguageCode } from "./academy-data";
 export type VoiceProfile = {
   role: string;
   cloudVoice: string;
+  geminiVoice: string;
   locale: string;
 };
 
 export type AudioCapability = {
-  mode: "openai" | "external" | "device";
+  mode: "gemini" | "openai" | "external" | "device";
   cloudReady: boolean;
   label: string;
 };
@@ -20,11 +21,13 @@ export type PlaybackInfo = {
 };
 
 const VOICE_PROFILES: Record<LanguageCode, VoiceProfile> = {
-  CN: { role: "中文讲师", cloudVoice: "Marin", locale: "zh-CN" },
-  EN: { role: "English Lecturer", cloudVoice: "Cedar", locale: "en-US" },
-  FR: { role: "Professeure", cloudVoice: "Coral", locale: "fr-FR" },
-  DE: { role: "Dozent", cloudVoice: "Sage", locale: "de-DE" },
+  CN: { role: "中文讲师", cloudVoice: "Marin", geminiVoice: "Kore", locale: "zh-CN" },
+  EN: { role: "English Lecturer", cloudVoice: "Cedar", geminiVoice: "Puck", locale: "en-US" },
+  FR: { role: "Professeure", cloudVoice: "Coral", geminiVoice: "Charon", locale: "fr-FR" },
+  DE: { role: "Dozent", cloudVoice: "Sage", geminiVoice: "Fenrir", locale: "de-DE" },
 };
+
+const GEMINI_SESSION_KEY = "omnimedia-gemini-api-key-session-v1";
 
 const PREFERRED_DEVICE_VOICES: Record<LanguageCode, string[]> = {
   CN: ["Tingting", "Ting-Ting", "Meijia", "Sin-ji", "Xiaoxiao"],
@@ -117,17 +120,38 @@ function decodePcm16(bytes: ArrayBuffer, audioContext: AudioContext) {
   return audioBuffer;
 }
 
-async function loadAudio(text: string, language: LanguageCode) {
-  const key = `${language}:${text}`;
+function readSessionGeminiApiKey() {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.sessionStorage.getItem(GEMINI_SESSION_KEY)?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+async function loadAudio(text: string, language: LanguageCode, geminiApiKey = "") {
+  const key = `${geminiApiKey ? "gemini" : "service"}:${language}:${text}`;
   const cached = cache.get(key);
   if (cached) return cached;
 
   const response = await fetch("/api/tts", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(geminiApiKey ? { "X-Gemini-API-Key": geminiApiKey } : {}),
+    },
     body: JSON.stringify({ text, language }),
   });
-  if (!response.ok) throw new Error("speech provider unavailable");
+  if (!response.ok) {
+    let message = "语音服务暂时不可用。";
+    try {
+      const error = await response.json() as { message?: string };
+      if (error.message) message = error.message;
+    } catch {
+      // Keep the safe user-facing message.
+    }
+    throw new Error(message);
+  }
 
   const bytes = await response.arrayBuffer();
   const audioContext = getContext();
@@ -323,13 +347,14 @@ export async function playSpeech(options: {
 
   stopCurrent();
   currentKey = key;
-  if (knownCapability?.mode === "device") {
+  const geminiApiKey = readSessionGeminiApiKey();
+  if (!geminiApiKey && knownCapability?.mode === "device") {
     return speakOnDevice(spokenText, options.language, key, options.onEnd);
   }
   const audioContext = getContext();
   const resume = audioContext.resume().catch(() => undefined);
   try {
-    const audio = await loadAudio(spokenText, options.language);
+    const audio = await loadAudio(spokenText, options.language, geminiApiKey);
     if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
     await resume;
     const source = audioContext.createBufferSource();
@@ -345,11 +370,19 @@ export async function playSpeech(options: {
     return {
       engine: "neural",
       voice: audio.voice,
-      label: audio.engine === "openai" ? "AI 神经原声" : "外部神经原声",
+      label: audio.engine === "gemini"
+        ? "Gemini 原生语音"
+        : audio.engine === "openai"
+          ? "AI 神经原声"
+          : "外部神经原声",
       sampleRate: audio.sampleRate,
     };
-  } catch {
+  } catch (error) {
     if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
+    if (geminiApiKey) {
+      stopCurrent();
+      throw error;
+    }
     return speakOnDevice(spokenText, options.language, key, options.onEnd);
   }
 }
@@ -362,7 +395,29 @@ export function voiceProfileForLanguage(language: LanguageCode) {
   return VOICE_PROFILES[language];
 }
 
+export function hasSessionGeminiApiKey() {
+  return Boolean(readSessionGeminiApiKey());
+}
+
+export function setSessionGeminiApiKey(value: string) {
+  if (typeof window === "undefined") return;
+  const normalized = value.trim();
+  if (!normalized) throw new Error("请输入 Gemini API Key。");
+  window.sessionStorage.setItem(GEMINI_SESSION_KEY, normalized);
+  knownCapability = { mode: "gemini", cloudReady: true, label: "Gemini 原生语音" };
+}
+
+export function clearSessionGeminiApiKey() {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(GEMINI_SESSION_KEY);
+  stopCurrent();
+  knownCapability = null;
+}
+
 export async function getAudioCapability(): Promise<AudioCapability> {
+  if (readSessionGeminiApiKey()) {
+    knownCapability = { mode: "gemini", cloudReady: true, label: "Gemini 原生语音" };
+    return knownCapability;
+  }
   try {
     const response = await fetch("/api/tts", { cache: "no-store" });
     if (!response.ok) throw new Error("status unavailable");

@@ -18,8 +18,11 @@ import {
   type VisualReference,
 } from "../lib/academy-data";
 import {
+  clearSessionGeminiApiKey,
   getAudioCapability,
+  hasSessionGeminiApiKey,
   playSpeech,
+  setSessionGeminiApiKey,
   stopSpeech,
   voiceProfileForLanguage,
   type AudioCapability,
@@ -144,6 +147,11 @@ export default function LecturerApp() {
     label: "设备增强声线",
   });
   const [lastPlayback, setLastPlayback] = useState<PlaybackInfo | null>(null);
+  const [speechSettingsOpen, setSpeechSettingsOpen] = useState(false);
+  const [geminiKeyInput, setGeminiKeyInput] = useState("");
+  const [geminiConfigured, setGeminiConfigured] = useState(false);
+  const [geminiConnecting, setGeminiConnecting] = useState(false);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
   const [curriculumOpen, setCurriculumOpen] = useState(false);
   const [curriculumLevel, setCurriculumLevel] = useState(0);
   const [activeTerm, setActiveTerm] = useState<ActiveTerm | null>(null);
@@ -208,7 +216,14 @@ export default function LecturerApp() {
   }, [toast]);
 
   useEffect(() => {
+    if (speechSettingsOpen) return;
+    setGeminiKeyInput("");
+    setGeminiError(null);
+  }, [speechSettingsOpen]);
+
+  useEffect(() => {
     let active = true;
+    setGeminiConfigured(hasSessionGeminiApiKey());
     void getAudioCapability().then((capability) => {
       if (active) setAudioCapability(capability);
     });
@@ -222,6 +237,7 @@ export default function LecturerApp() {
       if (event.key !== "Escape") return;
       setCurriculumOpen(false);
       setNotebookOpen(false);
+      setSpeechSettingsOpen(false);
       setActiveTerm(null);
     };
     window.addEventListener("keydown", close);
@@ -298,10 +314,45 @@ export default function LecturerApp() {
       setToast(result.engine === "neural"
         ? `${result.label} · ${result.voice} · ${result.sampleRate || 24_000} Hz`
         : `${result.label} · 当前实际声线：${result.voice}`);
-    } catch {
+    } catch (error) {
       setPlayingKey(null);
-      setToast("当前设备暂不支持语音播放");
+      setToast(error instanceof Error ? error.message : "当前设备暂不支持语音播放");
     }
+  }
+
+  async function connectGemini(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = geminiKeyInput.trim();
+    if (!value) return;
+    setGeminiConnecting(true);
+    setGeminiError(null);
+    try {
+      setSessionGeminiApiKey(value);
+      setGeminiConfigured(true);
+      setAudioCapability({ mode: "gemini", cloudReady: true, label: "Gemini 原生语音" });
+      const result = await playSpeech({ text: "知识为体，语言为用。", language: "CN" });
+      setLastPlayback(result);
+      setGeminiKeyInput("");
+      setSpeechSettingsOpen(false);
+      setToast(`Gemini 已连接 · ${result.voice} · ${result.sampleRate || 24_000} Hz`);
+    } catch (error) {
+      clearSessionGeminiApiKey();
+      setGeminiConfigured(false);
+      setAudioCapability(await getAudioCapability());
+      setGeminiError(error instanceof Error ? error.message : "无法连接 Gemini，请检查 Key。");
+    } finally {
+      setGeminiConnecting(false);
+    }
+  }
+
+  async function disconnectGemini() {
+    clearSessionGeminiApiKey();
+    setGeminiConfigured(false);
+    setGeminiKeyInput("");
+    setGeminiError(null);
+    setLastPlayback(null);
+    setAudioCapability(await getAudioCapability());
+    setToast("已清除本次会话中的 Gemini Key");
   }
 
   async function inspectTerm(term: ActiveTerm) {
@@ -512,7 +563,13 @@ export default function LecturerApp() {
               </section>
 
               <section className="voice-strategy">
-                <header><span>真实多语声线</span><small>{audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small></header>
+                <header>
+                  <span>真实多语声线</span>
+                  <span className="voice-header-actions">
+                    <small>{audioCapability.mode === "gemini" ? "GEMINI TTS" : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
+                    <button type="button" onClick={() => { setGeminiError(null); setSpeechSettingsOpen(true); }}>{geminiConfigured ? "已连接" : "连接"}</button>
+                  </span>
+                </header>
                 {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => {
                   const profile = voiceProfileForLanguage(language);
                   const sample = language === "CN" ? "知识为体，语言为用。" : language === "EN" ? "Knowledge gives language its purpose." : language === "FR" ? "La langue éclaire le savoir." : "Sprache macht Wissen beweglich.";
@@ -520,13 +577,13 @@ export default function LecturerApp() {
                   return (
                     <button type="button" className={playingKey === sampleKey ? "playing" : ""} key={language} onClick={() => void speak(sample, language)}>
                       <span>{language}</span>
-                      <span className="voice-copy"><strong>{profile.role}</strong><small>{audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
+                      <span className="voice-copy"><strong>{profile.role}</strong><small>{audioCapability.mode === "gemini" ? profile.geminiVoice : audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
                       <i className="mini-wave"><b /><b /><b /></i>
                     </button>
                   );
                 })}
                 <p className={audioCapability.cloudReady ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : "分句朗读 · 跨语切换 · 真实声线检测"}</p>
-                {audioCapability.mode === "openai" && <p className="voice-disclosure">AI 生成语音 · 非真人录音</p>}
+                {(audioCapability.mode === "openai" || audioCapability.mode === "gemini") && <p className="voice-disclosure">AI 生成语音 · 非真人录音</p>}
               </section>
 
               <section className="protocol-card">
@@ -582,6 +639,46 @@ export default function LecturerApp() {
               </div>
               <footer><span>CLIL</span><p>选择课程后，讲师将以中文建立概念，再用 EN / FR / DE 校准术语边界。</p></footer>
             </section>
+          </div>
+        </ModalShell>
+      )}
+
+      {speechSettingsOpen && (
+        <ModalShell label="连接自己的 Gemini 语音" onClose={() => setSpeechSettingsOpen(false)}>
+          <header className="modal-header gemini-modal-header">
+            <div><small>BRING YOUR OWN KEY · SESSION ONLY</small><h2>连接 Gemini 原生语音</h2><p>使用你自己的免费配额，启用 Kore / Puck / Charon / Fenrir 四语声线。</p></div>
+            <button type="button" onClick={() => setSpeechSettingsOpen(false)} aria-label="关闭">×</button>
+          </header>
+          <div className="gemini-setup">
+            <section className={`gemini-connection-state ${geminiConfigured ? "connected" : ""}`}>
+              <span>{geminiConfigured ? "✓" : "◇"}</span>
+              <div><strong>{geminiConfigured ? "本次会话已连接" : "尚未连接 Gemini"}</strong><p>{geminiConfigured ? "所有朗读将优先使用你的 Gemini Key。" : "Key 不会写入仓库、笔记或永久浏览器存储。"}</p></div>
+            </section>
+            <form onSubmit={(event) => void connectGemini(event)}>
+              <label htmlFor="gemini-api-key">Gemini API Key</label>
+              <div className="gemini-key-field">
+                <span>✦</span>
+                <input
+                  id="gemini-api-key"
+                  type="password"
+                  value={geminiKeyInput}
+                  onChange={(event) => { setGeminiKeyInput(event.target.value); setGeminiError(null); }}
+                  placeholder="粘贴 AI Studio 中创建的 Key"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              {geminiError && <p className="gemini-error" role="alert">{geminiError}</p>}
+              <p className="gemini-privacy">密钥仅保存在当前标签页会话中，并通过 HTTPS 发送到本应用服务端后转发给 Google。关闭标签页或点击“清除连接”即删除。</p>
+              <div className="gemini-actions">
+                <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer">前往 AI Studio 创建 Key ↗</a>
+                <span>
+                  {geminiConfigured && <button className="gemini-disconnect" type="button" onClick={() => void disconnectGemini()}>清除连接</button>}
+                  <button className="gemini-connect" type="submit" disabled={geminiKeyInput.trim().length < 20 || geminiConnecting}>{geminiConnecting ? "正在验证并试听…" : "连接并试听"}</button>
+                </span>
+              </div>
+            </form>
+            <footer><span>01</span><p>免费层内容可能用于改进 Google 产品，请勿朗读敏感、机密或个人信息。</p><span>02</span><p>免费额度、地区和年龄限制由 Google 决定；本应用不会代你购买服务。</p></footer>
           </div>
         </ModalShell>
       )}

@@ -33,6 +33,7 @@ test("renders the Omnimedia Lecturer academy", async () => {
   assert.match(html, /概念定义/);
   assert.match(html, /案例分析/);
   assert.match(html, /学术精读/);
+  assert.match(html, /真实多语声线/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });
 
@@ -53,4 +54,72 @@ test("reports the real audio engine without exposing fake cloud voices", async (
   });
   assert.equal(speechResponse.status, 503);
   assert.equal((await speechResponse.json()).error, "CLOUD_TTS_NOT_CONFIGURED");
+});
+
+test("proxies a user-owned Gemini key without persisting or returning it", async () => {
+  const originalFetch = globalThis.fetch;
+  const apiKey = "AIza-user-owned-test-key-1234567890";
+  const pcm = Buffer.from([0, 0, 255, 127, 0, 128]);
+  let observedRequest;
+
+  globalThis.fetch = async (input, init) => {
+    observedRequest = { input: String(input), init };
+    return Response.json({
+      candidates: [{
+        content: {
+          parts: [{
+            inlineData: {
+              data: pcm.toString("base64"),
+              mimeType: "audio/L16;codec=pcm;rate=24000",
+            },
+          }],
+        },
+      }],
+    });
+  };
+
+  try {
+    const response = await render("/api/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Gemini-API-Key": apiKey,
+      },
+      body: JSON.stringify({ text: "知识为体，语言为用。", language: "CN" }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-tts-engine"), "gemini");
+    assert.equal(response.headers.get("x-tts-voice"), "Kore");
+    assert.equal(response.headers.get("x-audio-sample-rate"), "24000");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), pcm);
+    assert.match(observedRequest.input, /gemini-3\.1-flash-tts-preview:generateContent$/);
+    assert.equal(observedRequest.init.headers["x-goog-api-key"], apiKey);
+    assert.doesNotMatch(JSON.stringify(observedRequest.init.body), new RegExp(apiKey));
+    assert.doesNotMatch(JSON.stringify([...response.headers]), new RegExp(apiKey));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("returns a useful error when the user's Gemini quota is exhausted", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ error: { message: "quota" } }, { status: 429 });
+
+  try {
+    const response = await render("/api/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Gemini-API-Key": "AIza-user-owned-test-key-1234567890",
+      },
+      body: JSON.stringify({ text: "Knowledge gives language its purpose.", language: "EN" }),
+    });
+    assert.equal(response.status, 429);
+    const error = await response.json();
+    assert.equal(error.error, "GEMINI_QUOTA_EXCEEDED");
+    assert.match(error.message, /额度|速率限制/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
