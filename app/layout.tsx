@@ -15,19 +15,19 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: origin,
-    title: "全媒体讲师 · Omnimedia Lecturer",
+    title: "全媒体领域学院 · Omnimedia Lecturer",
     description:
-      "一间以罗塞塔方法连接中、英、法、德四种语言的数字书房。",
+      "以 CLIL 教学法连接八大学科与中、英、法、德四种语言的多模态学术学院。",
     openGraph: {
-      title: "全媒体讲师 · Omnimedia Lecturer",
-      description: "让概念在四种语言中彼此照亮。",
+      title: "全媒体领域学院 · Omnimedia Lecturer",
+      description: "知识为体，语言为用：八大学科的 CLIL 多语学习平台。",
       images: [new URL("/og.png", origin).toString()],
     },
     twitter: {
       card: "summary_large_image",
-      title: "全媒体讲师",
+      title: "全媒体领域学院",
       description:
-        "The Rosetta Method for literature, economics, science and art.",
+        "Eight academic campaigns with Chinese-led EN / FR / DE terminology learning.",
       images: [new URL("/og.png", origin).toString()],
     },
   };

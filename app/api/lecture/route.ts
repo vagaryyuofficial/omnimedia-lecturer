@@ -8,17 +8,28 @@ import {
 const SUBJECTS = new Set<SubjectId>([
   "literature",
   "economics",
-  "science",
+  "psychology",
+  "business",
+  "daily",
   "art",
+  "philosophy",
+  "science",
 ]);
 const MODES = new Set<TeachingMode>([
-  "lecture",
-  "quiz",
-  "assignment",
+  "concept",
+  "case",
+  "close-reading",
   "question",
 ]);
 
 type Source = { title?: string; url?: string };
+type Visual = {
+  src?: string;
+  title?: string;
+  caption?: string;
+  sourceUrl?: string;
+  sourceLabel?: string;
+};
 
 export async function POST(request: Request) {
   const endpoint = process.env.LECTURER_TEXT_ENDPOINT;
@@ -70,7 +81,9 @@ export async function POST(request: Request) {
       requestedCapabilities: [
         "web-search",
         "source-citations",
+        "visual-grounding",
         "multilingual-terminology",
+        "clil-dsl-v1",
       ],
     }),
   });
@@ -86,6 +99,7 @@ export async function POST(request: Request) {
   const result = (await providerResponse.json()) as {
     text?: string;
     sources?: Source[];
+    visuals?: Visual[];
     grounded?: boolean;
   };
   const text = result.text?.trim();
@@ -104,9 +118,25 @@ export async function POST(request: Request) {
     }))
     .slice(0, 6);
 
+  const visuals = (result.visuals || [])
+    .filter(
+      (visual): visual is Required<Visual> =>
+        Boolean(
+          visual.src &&
+            visual.title &&
+            visual.caption &&
+            visual.sourceUrl &&
+            visual.sourceLabel &&
+            /^https?:\/\//i.test(visual.src) &&
+            /^https?:\/\//i.test(visual.sourceUrl),
+        ),
+    )
+    .slice(0, 4);
+
   return Response.json({
     text,
     sources,
+    visuals,
     grounded: result.grounded ?? sources.length > 0,
   });
 }

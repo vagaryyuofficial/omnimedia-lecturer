@@ -13,18 +13,25 @@ async function render() {
   );
 }
 
-test("renders the Omnimedia Lecturer study", async () => {
+test("renders the Omnimedia Lecturer academy", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<html[^>]+lang="zh-CN"/i);
-  assert.match(html, /<title>全媒体讲师 · Omnimedia Lecturer<\/title>/i);
-  assert.match(html, /比较文学/);
-  assert.match(html, /全球经济/);
-  assert.match(html, /自然哲学与科学/);
-  assert.match(html, /艺术史/);
-  assert.match(html, /罗塞塔方法/);
+  assert.match(html, /<title>全媒体领域学院 · Omnimedia Lecturer<\/title>/i);
+  assert.match(html, /文学名著/);
+  assert.match(html, /经济学/);
+  assert.match(html, /心理学/);
+  assert.match(html, /商务交流/);
+  assert.match(html, /生活用语/);
+  assert.match(html, /艺术美学/);
+  assert.match(html, /哲学/);
+  assert.match(html, /科学技术/);
+  assert.match(html, /CLIL · 内容与语言整合/);
+  assert.match(html, /概念定义/);
+  assert.match(html, /案例分析/);
+  assert.match(html, /学术精读/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });

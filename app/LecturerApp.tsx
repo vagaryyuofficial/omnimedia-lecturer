@@ -3,298 +3,248 @@
 import {
   FormEvent,
   Fragment,
+  ReactNode,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
+import {
+  CURRICULUM,
+  LESSONS,
+  SUBJECTS,
+  TERM_REPORTS,
+  type LanguageCode,
+  type TermReport,
+  type VisualReference,
+} from "../lib/academy-data";
+import { playSpeech, stopSpeech, voiceForLanguage } from "../lib/audio-engine";
+import { parseLectureDsl, type InlineToken } from "../lib/dsl";
 import type { SubjectId, TeachingMode } from "../lib/prompts";
 
 type Source = { title: string; url: string };
-type Term = { cn: string; en: string; fr: string; de: string; note: string };
-type Section = { number: string; title: string; body: string };
-type Subject = {
-  id: SubjectId;
-  symbol: string;
-  name: string;
-  nameEn: string;
-  voice: string;
-  voiceLabel: string;
-  direction: string;
-  accent: string;
-};
-type Lesson = {
-  index: string;
+type ActiveTerm = { value: string; language: LanguageCode };
+type Note = {
+  id: string;
   title: string;
-  deck: string;
-  quote: string;
-  quoteSource: string;
-  sections: Section[];
-  term: Term;
-  sources: Source[];
-  prompt: string;
-  questions: Array<{ label: string; question: string; answer: string }>;
-  assignment: {
-    task: string;
-    format: string;
-    criteria: string[];
-    stretch: string;
+  body: string;
+  subject: SubjectId;
+  updatedAt: number;
+};
+
+const QUICK_ACTIONS: Array<{
+  id: Exclude<TeachingMode, "question">;
+  label: string;
+  en: string;
+  glyph: string;
+}> = [
+  { id: "concept", label: "概念定义", en: "CONCEPT", glyph: "◐" },
+  { id: "case", label: "案例分析", en: "CASE", glyph: "◇" },
+  { id: "close-reading", label: "学术精读", en: "CLOSE READ", glyph: "¶" },
+];
+
+const LANGUAGE_META: Record<Exclude<LanguageCode, "CN">, {
+  flag: string;
+  name: string;
+  color: string;
+}> = {
+  EN: { flag: "🇺🇸", name: "English", color: "#4773a8" },
+  FR: { flag: "🇫🇷", name: "Français", color: "#585b9b" },
+  DE: { flag: "🇩🇪", name: "Deutsch", color: "#a77728" },
+};
+
+const DEFAULT_NOTE: Note = {
+  id: "welcome",
+  title: "第一则学院笔记",
+  body: "CLIL 不是把同一段话翻译三遍，而是让不同语言帮助我看见概念的边界。\n\n今天想继续追问：",
+  subject: "literature",
+  updatedAt: Date.now(),
+};
+
+function genericReport(term: ActiveTerm, subjectName: string): TermReport {
+  return {
+    definition: `“${term.value}”是「${subjectName}」课程中的关键概念。当前展示内置摘要；连接术语接口后可生成更细致的学术定义与理论背景。`,
+    etymology: "该词的完整词源报告尚未写入本地词库。实时术语接口会追溯希腊语、拉丁语或日耳曼语词根，并区分可靠词源与民间附会。",
+    grammar: `${term.language} 术语。实时报告可补充词性、阴阳性、变位、格位、固定搭配与常见句法位置。`,
+    nuance: "应把日常用法与当前学科中的技术含义分开，并通过近义词比较划定语义边界。",
+    example: `${term.value} becomes precise only when its context is made explicit.`,
+    translation: `只有在语境被明确以后，“${term.value}”的含义才真正精确。`,
   };
-};
+}
 
-const SUBJECTS: Subject[] = [
-  {
-    id: "literature",
-    symbol: "文",
-    name: "比较文学",
-    nameEn: "Literature",
-    voice: "Fenrir",
-    voiceLabel: "深沉叙事",
-    direction: "以深沉、从容、富有文学叙事感的中文朗读",
-    accent: "#9a5d47",
-  },
-  {
-    id: "economics",
-    symbol: "经",
-    name: "全球经济",
-    nameEn: "Economics",
-    voice: "Kore",
-    voiceLabel: "冷静稳健",
-    direction: "以冷静、专业、稳健而不失亲和的中文朗读",
-    accent: "#3f6f62",
-  },
-  {
-    id: "science",
-    symbol: "科",
-    name: "自然哲学与科学",
-    nameEn: "Science",
-    voice: "Puck",
-    voiceLabel: "清晰灵动",
-    direction: "以清晰、灵动、富有探索感的中文朗读",
-    accent: "#49708a",
-  },
-  {
-    id: "art",
-    symbol: "艺",
-    name: "艺术史",
-    nameEn: "Art History",
-    voice: "Charon",
-    voiceLabel: "磁性克制",
-    direction: "以磁性、克制、富有材质感的中文朗读",
-    accent: "#725e87",
-  },
-];
+function termReportFor(term: ActiveTerm, subjectName: string) {
+  const normalized = term.value.toLowerCase().replace(/[.,!?]/g, "");
+  return TERM_REPORTS[normalized] || genericReport(term, subjectName);
+}
 
-const LESSONS: Record<SubjectId, Lesson> = {
-  literature: {
-    index: "VOL. 08 · 欲望与行动",
-    title: "浮士德式追问：\n在行动中成为自己",
-    deck: "从一个无法被直译的德语词出发，理解现代人为何在欲望、知识与行动之间徘徊。",
-    quote: "Im Anfang war die Tat.",
-    quoteSource: "Goethe, Faust I · “太初有行动”",
-    sections: [
-      {
-        number: "01",
-        title: "概念：Streben 不只是“努力”",
-        body: "在《浮士德》里，Streben 是一种不肯停止的追求。它既可译为“奋斗”，也带有向某物伸展的方向感。中文的“求索”多了一层诗性；英语 striving 强调持续用力；法语 aspiration 则更接近愿望与提升。",
-      },
-      {
-        number: "02",
-        title: "历史：从 Logos 到 Tat",
-        body: "浮士德翻译《约翰福音》时，把“太初有道”逐步改写为“太初有行动”。这不是简单的译词替换，而是把世界的起点从语言和理性，移向实践与创造。",
-      },
-      {
-        number: "03",
-        title: "当代：为何“不停地做”仍然值得怀疑",
-        body: "今天的效率文化会轻易把 Tat 误读为无休止的产出。但歌德的问题更难：行动能否被反思修正？一个人的追求，是否也为他人留下了世界？",
-      },
-    ],
-    term: {
-      cn: "求索 / 奋斗",
-      en: "Striving",
-      fr: "Aspiration",
-      de: "Streben",
-      note: "德语词根 streb- 含有“用力朝向”的动态感，比中文“理想”更强调过程。",
-    },
-    sources: [
-      { title: "Goethe · Faust (Project Gutenberg)", url: "https://www.gutenberg.org/ebooks/14591" },
-      { title: "Goethe · Encyclopaedia Britannica", url: "https://www.britannica.com/biography/Johann-Wolfgang-von-Goethe" },
-    ],
-    prompt: "当一切行动都可以被量化时，我们还能如何区分“忙碌”与“求索”？",
-    questions: [
-      { label: "选择题", question: "Streben 在《浮士德》中最接近哪一种语感？\nA. 完成后的满足\nB. 持续朝向某物的追求\nC. 被动服从\nD. 短暂兴奋", answer: "B。关键在过程性与方向感。" },
-      { label: "译读题", question: "为什么把 Tat 译成“行动”，比译成“事情”更接近这一段的思想张力？", answer: "“行动”保留了主体的实践性，“事情”则容易只指结果或事件。" },
-      { label: "思考题", question: "浮士德的“不满足”是人的尊严，还是现代性的病症？", answer: "两种读法都成立；好回答需以文本细节划定各自的边界。" },
-    ],
-    assignment: {
-      task: "从你的日常生活中选择一个反复发生的行动，用“求索”与“忙碌”两个框架各解释一次。",
-      format: "600–800 字微型随笔，至少精读《浮士德》中的一句话。",
-      criteria: ["概念界定清楚", "文本证据具体", "能呈现而非抑平矛盾"],
-      stretch: "比较 striving、aspiration 和 Streben，说明你最终为何选用某个译词。",
-    },
-  },
-  economics: {
-    index: "VOL. 12 · 价格与预期",
-    title: "通胀不是\n一张涨价清单",
-    deck: "从价格水平、货币感受与集体预期出发，重新理解一个最熟悉也最容易被误解的经济词。",
-    quote: "Inflation is always and everywhere a monetary phenomenon.",
-    quoteSource: "Milton Friedman · 一种重要而非唯一的解释框架",
-    sections: [
-      { number: "01", title: "概念：总体价格水平的持续上升", body: "某一种商品涨价不等于通胀。经济学关心的是一篮子商品与服务的总体价格变化，以及这种变化是否持续、是否广泛。" },
-      { number: "02", title: "历史：从货币数量到供应冲击", body: "货币主义强调货币与总需求，凯恩斯主义重视产出缺口，当代分析还需同时观察供应链、能源价格、工资与预期。" },
-      { number: "03", title: "当代：数据与体感为何不同", body: "统计权重描述平均家庭，真实人生却有不同的房租、能源和食品支出结构。因此，理解通胀需同时尊重统计和个体经验。" },
-    ],
-    term: { cn: "通货膨胀", en: "Inflation", fr: "Inflation", de: "Inflation / Teuerung", note: "Inflation 源自拉丁语 inflare，意为“吹胀”；德语 Teuerung 则更直接地让人感到“变贵”。" },
-    sources: [
-      { title: "IMF · Inflation explained", url: "https://www.imf.org/en/Publications/fandd/issues/Series/Back-to-Basics/Inflation" },
-      { title: "ECB · What is inflation?", url: "https://www.ecb.europa.eu/ecb-and-you/explainers/tell-me-more/html/what_is_inflation.en.html" },
-    ],
-    prompt: "当官方通胀下降时，为什么人们仍可能觉得“东西越来越贵”？",
-    questions: [
-      { label: "选择题", question: "下列哪一项最接近通胀？\nA. 苹果单独涨价\nB. 广泛且持续的总体价格上升\nC. 股市上涨\nD. 某个品牌涨价", answer: "B。关键是广泛性、持续性与总体价格水平。" },
-      { label: "语感题", question: "德语 Teuerung 与 Inflation 在日常理解上有何差别？", answer: "Teuerung 更直观地指向生活中的“变贵”，Inflation 则更像宏观分析术语。" },
-      { label: "思考题", question: "如何在尊重个人物价体感的同时，不放弃总体统计？", answer: "好答案会区分分布与平均值，并说明家庭消费结构的异质性。" },
-    ],
-    assignment: { task: "设计一个属于你自己或某个具体家庭的“体感通胀篮子”。", format: "选 8–12 项月度支出，赋予权重，并写 400 字分析。", criteria: ["权重有理由", "区分价格与数量", "不把个体结果冒充总体指标"], stretch: "将结果与当地消费价格指数的分项权重比较。" },
-  },
-  science: {
-    index: "VOL. 05 · 运动与解释",
-    title: "从 physis 到 physics：\n惯性如何改变世界",
-    deck: "一个看似安静的概念，如何帮助人类放弃“运动需要持续推动”的直觉。",
-    quote: "Corpus omne perseverare in statu suo...",
-    quoteSource: "Newton, Principia · 物体保持其状态的倾向",
-    sections: [
-      { number: "01", title: "概念：惯性不是“懒惰”", body: "惯性是物体保持静止或匀速直线运动状态的性质。它不是一种额外的力，而是对“运动状态为何改变”的基准说明。" },
-      { number: "02", title: "历史：从自然位置到惯性运动", body: "亚里士多德物理学倾向把运动与持续作用联系起来；伽利略的理想化思想实验和牛顿的形式化，使匀速运动不再需要一个持续的“推动者”。" },
-      { number: "03", title: "当代：科学如何用理想化对抗直觉", body: "日常世界里处处有摩擦，所以运动似乎总会停下。惯性定律的力量在于，它先构造一个去除干扰的理想情形，再让我们看见摩擦本身。" },
-    ],
-    term: { cn: "惯性", en: "Inertia", fr: "Inertie", de: "Trägheit", note: "源自拉丁语 iners（无技艺、不活动）；德语 Trägheit 仍保留了日常语言中“迟缓”的隐喻。" },
-    sources: [
-      { title: "Newton's Principia · Cambridge Digital Library", url: "https://cudl.lib.cam.ac.uk/view/PR-ADV-B-00039-00001/" },
-      { title: "Newton's laws · Encyclopaedia Britannica", url: "https://www.britannica.com/science/Newtons-laws-of-motion" },
-    ],
-    prompt: "科学为什么必须暂时“忽略”摩擦，才能更准确地说明真实世界？",
-    questions: [
-      { label: "选择题", question: "惯性是什么？\nA. 使物体前进的力\nB. 物体保持运动状态的性质\nC. 摩擦力的反作用\nD. 只存在于静止物体", answer: "B。惯性不是力，也同时适用于静止和匀速直线运动。" },
-      { label: "词源题", question: "Inertia 的拉丁词源为何会让人对物理概念产生误解？", answer: "它带有“不活动”的日常含义，但物理上也包括保持匀速运动。" },
-      { label: "思考题", question: "理想化是对现实的背离，还是理解现实的必要步骤？", answer: "关键在于理想化是否公开其条件，并能把被忽略的因素重新纳入检验。" },
-    ],
-    assignment: { task: "用一个日常场景设计“去除摩擦”的思想实验，并标出它与现实的差异。", format: "一张图或 500–700 字说明，包含初始条件、变量和预测。", criteria: ["定义没有把惯性当作力", "理想化条件明确", "预测可被反驳"], stretch: "说明如何通过实验估计装置中未能消除的摩擦。" },
-  },
-  art: {
-    index: "VOL. 09 · 光与观看",
-    title: "明暗对照：\n光如何成为思想",
-    deck: "从文艺复兴的造型到巴洛克的戏剧，学会辨认画面中的光不只照亮事物，也分配意义。",
-    quote: "Painting is concerned with all the ten attributes of sight.",
-    quoteSource: "Leonardo da Vinci · 绘画关乎观看的秩序",
-    sections: [
-      { number: "01", title: "概念：chiaroscuro 是造型方法", body: "Chiaroscuro 由意大利语 chiaro（明）与 scuro（暗）构成。它通过明度差让平面形象获得体积，也能将观者的注意力编排成一条视觉路径。" },
-      { number: "02", title: "历史：从柔和过渡到戏剧性黑暗", body: "文艺复兴画家用明暗塑造解剖学上可信的身体；至卡拉瓦乔式的强光中，黑暗不再只是背景，而成为切断时间、推迟真相的叙事力量。" },
-      { number: "03", title: "当代：从画布到银幕与界面", body: "黑色电影、摄影与数字界面仍在使用明暗层级组织视线。当我们问“最亮的地方是什么”，实际也在问“谁拥有被看见的权利”。" },
-    ],
-    term: { cn: "明暗对照法", en: "Chiaroscuro", fr: "Clair-obscur", de: "Hell-Dunkel", note: "四种语言都保留了“明/暗”二元结构；英语直接借入意大利词，保留了工坊技法的历史感。" },
-    sources: [
-      { title: "The Met · Chiaroscuro", url: "https://www.metmuseum.org/toah/hd/chio/hd_chio.htm" },
-      { title: "National Gallery · Caravaggio", url: "https://www.nationalgallery.org.uk/artists/michelangelo-merisi-da-caravaggio" },
-    ],
-    prompt: "如果一幅画的黑暗部分比被照亮的主体更多，那些黑暗是“空白”吗？",
-    questions: [
-      { label: "选择题", question: "Chiaroscuro 最核心的功能是？\nA. 只把画面变暗\nB. 用明度差塑造体积并组织视线\nC. 使用更多颜料\nD. 消除轮廓", answer: "B。它既是造型技法，也可成为叙事结构。" },
-      { label: "语言题", question: "英语为何没有完全意译 chiaroscuro？", answer: "借词保留了这一技法在意大利文艺复兴工坊中的历史来源。" },
-      { label: "思考题", question: "光在卡拉瓦乔的画中是物理现象，还是伦理判断？", answer: "可以同时是两者；需通过光源位置、人物姿态与叙事时刻提供证据。" },
-    ],
-    assignment: { task: "选择一张画作、电影截帧或摄影作品，绘制一张只保留三级明度的结构草图。", format: "一张草图 + 500 字观察，注明作品来源。", criteria: ["观察先于评价", "能说明视线路径", "术语使用准确"], stretch: "设想把最亮与最暗区域互换后，作品的权力关系如何改变。" },
-  },
-};
+function ensureTrilingualCards(primary: string, fallback: string) {
+  const missing = (["EN", "FR", "DE"] as const)
+    .filter((language) => !primary.includes(`[[${language}:`))
+    .map((language) => fallback
+      .split("\n")
+      .find((line) => line.trim().startsWith(`[[${language}:`)))
+    .filter((line): line is string => Boolean(line));
 
-const MODE_LABELS: Array<{ id: Exclude<TeachingMode, "question">; label: string; glyph: string }> = [
-  { id: "lecture", label: "今日课程", glyph: "◐" },
-  { id: "quiz", label: "随堂测验", glyph: "✓" },
-  { id: "assignment", label: "布置作业", glyph: "↗" },
-];
+  return missing.length
+    ? `${primary}\n\n## 核心术语回顾\n${missing.join("\n")}`
+    : primary;
+}
 
-function GeneratedText({ text }: { text: string }) {
+function ModalShell({
+  children,
+  label,
+  onClose,
+  wide = false,
+}: {
+  children: ReactNode;
+  label: string;
+  onClose: () => void;
+  wide?: boolean;
+}) {
   return (
-    <div className="generated-text">
-      {text.split("\n").map((raw, index) => {
-        const line = raw.trim();
-        if (!line) return <span className="generated-space" key={index} />;
-        if (line.startsWith("### ")) return <h3 key={index}>{line.slice(4)}</h3>;
-        if (line.startsWith("## ")) return <h2 key={index}>{line.slice(3)}</h2>;
-        if (line.startsWith("# ")) return <h2 key={index}>{line.slice(2)}</h2>;
-        if (/^[-*] /.test(line)) return <div className="generated-list" key={index}>{line.slice(2)}</div>;
-        return <p key={index}>{line.replaceAll("**", "")}</p>;
-      })}
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className={`modal-shell ${wide ? "wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+      >
+        {children}
+      </section>
     </div>
   );
 }
 
 export default function LecturerApp() {
   const [subjectId, setSubjectId] = useState<SubjectId>("literature");
-  const [mode, setMode] = useState<TeachingMode>("lecture");
+  const [mode, setMode] = useState<TeachingMode>("concept");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [generated, setGenerated] = useState<string | null>(null);
+  const [generatedDsl, setGeneratedDsl] = useState<string | null>(null);
   const [liveSources, setLiveSources] = useState<Source[]>([]);
+  const [liveVisuals, setLiveVisuals] = useState<VisualReference[]>([]);
+  const [focusTopic, setFocusTopic] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [speaking, setSpeaking] = useState(false);
-  const [answersOpen, setAnswersOpen] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [curriculumOpen, setCurriculumOpen] = useState(false);
+  const [curriculumLevel, setCurriculumLevel] = useState(0);
+  const [activeTerm, setActiveTerm] = useState<ActiveTerm | null>(null);
+  const [termReport, setTermReport] = useState<TermReport | null>(null);
+  const [termLoading, setTermLoading] = useState(false);
+  const [notebookOpen, setNotebookOpen] = useState(false);
+  const [notes, setNotes] = useState<Note[]>([DEFAULT_NOTE]);
+  const [activeNoteId, setActiveNoteId] = useState(DEFAULT_NOTE.id);
+  const [noteSearch, setNoteSearch] = useState("");
+  const [notesHydrated, setNotesHydrated] = useState(false);
 
-  const subject = useMemo(
-    () => SUBJECTS.find((item) => item.id === subjectId) || SUBJECTS[0],
-    [subjectId],
-  );
+  const subject = SUBJECTS.find((item) => item.id === subjectId) || SUBJECTS[0];
   const lesson = LESSONS[subjectId];
-  const sources = generated && liveSources.length ? liveSources : lesson.sources;
+  const currentCurriculum = CURRICULUM[subjectId];
+  const activeNote = notes.find((note) => note.id === activeNoteId) || notes[0];
+
+  const modeDsl = mode === "case"
+    ? lesson.caseDsl
+    : mode === "close-reading"
+      ? lesson.closeReadingDsl
+      : lesson.conceptDsl;
+  const localDsl = ensureTrilingualCards(modeDsl, lesson.conceptDsl);
+  const visibleDsl = generatedDsl || localDsl;
+  const blocks = useMemo(() => parseLectureDsl(visibleDsl), [visibleDsl]);
+  const visuals = liveVisuals.length ? liveVisuals : lesson.visuals;
+
+  const filteredNotes = useMemo(
+    () => notes
+      .filter((note) => `${note.title}\n${note.body}`.toLowerCase().includes(noteSearch.toLowerCase()))
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+    [noteSearch, notes],
+  );
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const raw = window.localStorage.getItem("omnimedia-academy-notes-v1");
+      if (raw) {
+        try {
+          const saved = JSON.parse(raw) as Note[];
+          if (saved.length) {
+            setNotes(saved);
+            setActiveNoteId(saved[0].id);
+          }
+        } catch {
+          // Keep the safe local seed if storage is malformed.
+        }
+      }
+      setNotesHydrated(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!notesHydrated) return;
+    window.localStorage.setItem("omnimedia-academy-notes-v1", JSON.stringify(notes));
+  }, [notes, notesHydrated]);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 3_200);
+    const timer = window.setTimeout(() => setToast(null), 3_000);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  useEffect(() => () => {
-    window.speechSynthesis?.cancel();
-    audioRef.current?.pause();
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setCurriculumOpen(false);
+      setNotebookOpen(false);
+      setActiveTerm(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
   }, []);
 
-  function changeSubject(next: SubjectId) {
-    window.speechSynthesis?.cancel();
-    audioRef.current?.pause();
-    setSpeaking(false);
+  useEffect(() => () => stopSpeech(), []);
+
+  function selectSubject(next: SubjectId) {
+    stopSpeech();
+    setPlayingKey(null);
     setSubjectId(next);
-    setMode("lecture");
-    setGenerated(null);
+    setMode("concept");
+    setGeneratedDsl(null);
     setLiveSources([]);
-    setAnswersOpen(false);
+    setLiveVisuals([]);
+    setFocusTopic(null);
+    setCurriculumLevel(0);
   }
 
-  async function requestLesson(nextMode: TeachingMode, customQuery?: string) {
+  async function requestLesson(nextMode: TeachingMode, requestedTopic?: string) {
     setMode(nextMode);
-    setAnswersOpen(false);
     setLoading(true);
-    setGenerated(null);
+    setGeneratedDsl(null);
     setLiveSources([]);
+    setLiveVisuals([]);
+    setFocusTopic(nextMode === "concept" && requestedTopic ? requestedTopic : null);
 
     try {
       const response = await fetch("/api/lecture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: subjectId, mode: nextMode, query: customQuery }),
+        body: JSON.stringify({ subject: subjectId, mode: nextMode, query: requestedTopic }),
       });
       if (!response.ok) throw new Error(String(response.status));
-      const data = (await response.json()) as { text: string; sources?: Source[] };
-      setGenerated(data.text);
+      const data = (await response.json()) as {
+        text: string;
+        sources?: Source[];
+        visuals?: VisualReference[];
+      };
+      setGeneratedDsl(data.text);
       setLiveSources(data.sources || []);
-      setToast("已结合 Google Search 更新讲义");
+      setLiveVisuals(data.visuals || []);
+      setToast("已完成检索核验与 CLIL 术语编排");
     } catch {
-      if (nextMode === "question" && customQuery) {
-        setGenerated(
-          `## 问题已留在书桌上\n\n“${customQuery}”\n\n当前公开演示未连接实时讲师服务，因此我不会用伪造的知识回答。连接任意兼容的本地或托管服务后，同一个问题会使用「${subject.name}」上下文、四语术语与可验证来源生成讲解。`,
-        );
-      }
-      setToast("当前为内置课程 · 可选连接任意讲师服务");
+      setToast("当前使用学院内置课程 · 未连接外部讲师服务");
     } finally {
       setLoading(false);
     }
@@ -302,249 +252,354 @@ export default function LecturerApp() {
 
   function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const nextQuery = query.trim();
-    if (!nextQuery) return;
-    void requestLesson("question", nextQuery);
+    const value = query.trim();
+    if (!value) return;
     setQuery("");
+    void requestLesson("question", value);
   }
 
-  function readableText() {
-    if (generated) return generated.replaceAll(/[#*_>`]/g, " ");
-    if (mode === "quiz") return lesson.questions.map((item) => `${item.label}。${item.question}`).join("。");
-    if (mode === "assignment") return `${lesson.assignment.task}。${lesson.assignment.format}。${lesson.assignment.criteria.join("。")}。${lesson.assignment.stretch}`;
-    return `${lesson.title}。${lesson.deck}。${lesson.sections.map((item) => `${item.title}。${item.body}`).join("。")}。今日留题：${lesson.prompt}`;
-  }
-
-  async function toggleSpeech() {
-    if (speaking) {
-      audioRef.current?.pause();
-      window.speechSynthesis?.cancel();
-      setSpeaking(false);
-      return;
-    }
-
-    setSpeaking(true);
+  async function speak(text: string, language: LanguageCode) {
+    const key = `${language}:${text}`;
+    setPlayingKey((current) => current === key ? null : key);
     try {
-      const response = await fetch("/api/tts", {
+      const result = await playSpeech({
+        text,
+        language,
+        onEnd: () => setPlayingKey((current) => current === key ? null : current),
+      });
+      if (result === "device") setToast(`${voiceForLanguage(language)} 未连接 · 已使用设备 ${language} 语音`);
+      if (result === "remote") setToast(`${voiceForLanguage(language)} · 24kHz 原声播放`);
+    } catch {
+      setPlayingKey(null);
+      setToast("当前设备暂不支持语音播放");
+    }
+  }
+
+  async function inspectTerm(term: ActiveTerm) {
+    setActiveTerm(term);
+    setTermReport(termReportFor(term, subject.name));
+    setTermLoading(true);
+    try {
+      const response = await fetch("/api/term", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: readableText(), voice: subject.voice, direction: subject.direction }),
+        body: JSON.stringify({ term: term.value, language: term.language, subject: subjectId }),
       });
       if (!response.ok) throw new Error(String(response.status));
-      const blob = await response.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
-      audioRef.current = audio;
-      audio.onended = () => setSpeaking(false);
-      audio.onerror = () => setSpeaking(false);
-      await audio.play();
-      setToast(`${subject.voice} 原声朗读已开始`);
+      setTermReport(await response.json() as TermReport);
     } catch {
-      if (!("speechSynthesis" in window)) {
-        setSpeaking(false);
-        setToast("当前浏览器不支持朗读");
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(readableText());
-      utterance.lang = "zh-CN";
-      utterance.rate = 0.94;
-      utterance.pitch = subjectId === "science" ? 1.05 : 0.96;
-      utterance.onend = () => setSpeaking(false);
-      utterance.onerror = () => setSpeaking(false);
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-      setToast("原声未配置 · 已使用设备语音");
+      // The built-in report remains immediately useful offline.
+    } finally {
+      setTermLoading(false);
     }
+  }
+
+  function renderInline(tokens: InlineToken[]) {
+    return tokens.map((token, index) => {
+      if (token.type === "text") return <Fragment key={index}>{token.value}</Fragment>;
+      const key = `${token.language}:${token.value}`;
+      return (
+        <span className={`term-pill lang-${token.language.toLowerCase()}`} key={`${key}-${index}`}>
+          <button type="button" onClick={() => void inspectTerm(token)}>{token.value}<small>{token.language}</small></button>
+          <button
+            type="button"
+            className={playingKey === key ? "playing" : ""}
+            aria-label={`朗读 ${token.value}`}
+            onClick={() => void speak(token.value, token.language)}
+          >{playingKey === key ? "Ⅱ" : "♪"}</button>
+        </span>
+      );
+    });
+  }
+
+  function chooseTopic(topic: string) {
+    setCurriculumOpen(false);
+    void requestLesson("concept", topic);
+  }
+
+  function createNote() {
+    const note: Note = {
+      id: `${Date.now()}`,
+      title: "未命名笔记",
+      body: "",
+      subject: subjectId,
+      updatedAt: Date.now(),
+    };
+    setNotes((current) => [note, ...current]);
+    setActiveNoteId(note.id);
+  }
+
+  function updateActiveNote(patch: Partial<Pick<Note, "title" | "body">>) {
+    setNotes((current) => current.map((note) => note.id === activeNoteId
+      ? { ...note, ...patch, updatedAt: Date.now(), subject: subjectId }
+      : note));
+  }
+
+  function deleteActiveNote() {
+    if (!activeNote) return;
+    const remaining = notes.filter((note) => note.id !== activeNote.id);
+    const next = remaining.length ? remaining : [{ ...DEFAULT_NOTE, id: `${Date.now()}`, updatedAt: Date.now() }];
+    setNotes(next);
+    setActiveNoteId(next[0].id);
   }
 
   return (
-    <main className="app" style={{ "--accent": subject.accent } as React.CSSProperties}>
-      <aside className="sidebar" aria-label="学科导航">
-        <div className="brand" aria-label="Omnimedia Lecturer">
-          <span className="brand-mark">OL</span>
-          <span className="brand-type"><strong>全媒体讲师</strong><small>OMNIMEDIA LECTURER</small></span>
+    <main className="academy-app" style={{ "--accent": subject.accent } as React.CSSProperties}>
+      <aside className="academy-sidebar" aria-label="八大学科学术战役">
+        <div className="academy-brand">
+          <span className="academy-mark">OL</span>
+          <span><strong>全媒体领域学院</strong><small>OMNIMEDIA LECTURER</small></span>
         </div>
 
-        <nav className="subject-nav">
-          <p className="nav-label">学科书房 <span>04</span></p>
+        <p className="campaign-label">ACADEMIC CAMPAIGNS <span>08</span></p>
+        <nav className="campaign-list">
           {SUBJECTS.map((item) => (
             <button
-              className={`subject-link ${item.id === subjectId ? "active" : ""}`}
-              key={item.id}
-              onClick={() => changeSubject(item.id)}
               type="button"
+              key={item.id}
+              className={item.id === subjectId ? "active" : ""}
+              onClick={() => selectSubject(item.id)}
               aria-current={item.id === subjectId ? "page" : undefined}
             >
-              <span className="subject-symbol">{item.symbol}</span>
-              <span><strong>{item.name}</strong><small>{item.nameEn}</small></span>
-              <i aria-hidden="true" />
+              <span className="campaign-code">{item.campaign}</span>
+              <span className="campaign-icon">{item.symbol}</span>
+              <span className="campaign-name"><strong>{item.name}</strong><small>{item.track}</small></span>
+              <i />
             </button>
           ))}
         </nav>
 
-        <div className="sidebar-note">
-          <span className="note-orbit" aria-hidden="true"><i /><i /><i /></span>
-          <div><strong>罗塞塔方法</strong><small>CN · EN · FR · DE</small></div>
-        </div>
-        <a className="open-source" href="https://github.com/" target="_blank" rel="noreferrer">
-          <span aria-hidden="true">◇</span> 开源项目 <span aria-hidden="true">↗</span>
-        </a>
+        <section className="clil-card">
+          <span className="clil-orbit"><i /><i /><i /></span>
+          <div><small>LEARNING METHOD</small><strong>CLIL · 内容与语言整合</strong><p>知识为体，语言为用</p></div>
+        </section>
+        <button className="notebook-launch" type="button" onClick={() => setNotebookOpen(true)}>
+          <span>▤</span><span><strong>多语备忘录</strong><small>{notes.length} NOTES · LOCAL</small></span><i>↗</i>
+        </button>
       </aside>
 
-      <section className="desk">
-        <header className="topbar">
-          <div className="mobile-brand"><span>OL</span><strong>全媒体讲师</strong></div>
-          <div className="breadcrumb"><span>书房</span><i>/</i><strong>{subject.name}</strong></div>
-          <div className="mode-switcher" aria-label="教学模式">
-            {MODE_LABELS.map((item) => (
+      <section className="academy-desk">
+        <header className="academy-topbar">
+          <div className="mobile-academy-brand"><span>OL</span><strong>领域学院</strong></div>
+          <div className="course-path"><small>{subject.campaign}</small><span>{subject.name}</span><i>/</i><strong>{focusTopic || lesson.index.split(" · ").slice(-1)[0]}</strong></div>
+          <div className="quick-actions" aria-label="快捷学术指令">
+            {QUICK_ACTIONS.map((action) => (
               <button
-                key={item.id}
-                className={mode === item.id ? "active" : ""}
                 type="button"
-                onClick={() => void requestLesson(item.id)}
+                key={action.id}
+                className={mode === action.id ? "active" : ""}
+                onClick={() => void requestLesson(action.id)}
                 disabled={loading}
               >
-                <span aria-hidden="true">{item.glyph}</span>{item.label}
+                <span>{action.glyph}</span><b>{action.label}</b><small>{action.en}</small>
               </button>
             ))}
           </div>
-          <button className="session-button" type="button" onClick={() => setToast("当前为本地、无账号演示会话")} aria-label="会话状态">
-            <span className="status-dot" />
-            <span><strong>STUDY 08</strong><small>本地会话</small></span>
-          </button>
+          <div className="topbar-tools">
+            <button type="button" onClick={() => setCurriculumOpen(true)}><span>⌘</span>课程大纲</button>
+            <button type="button" className="round-tool" onClick={() => setNotebookOpen(true)} aria-label="打开备忘录">▤</button>
+          </div>
         </header>
 
-        <div className="desk-scroll">
-          <div className="lesson-layout">
-            <article className={`paper ${loading ? "loading" : ""}`} aria-busy={loading}>
-              <div className="paper-rule" />
-              <header className="lesson-head">
-                <div className="eyebrow"><span>{subject.symbol}</span>{lesson.index}</div>
-                {generated ? (
-                  <GeneratedText text={generated} />
-                ) : mode === "quiz" ? (
-                  <>
-                    <p className="section-kicker">QUICK REVIEW · 10 MIN</p>
-                    <h1>随堂测验</h1>
-                    <p className="lesson-deck">用三个问题，检验概念、语感与论证边界。</p>
-                  </>
-                ) : mode === "assignment" ? (
-                  <>
-                    <p className="section-kicker">DEEP PRACTICE · 30–45 MIN</p>
-                    <h1>今日作业</h1>
-                    <p className="lesson-deck">把今天的概念从书页带回你的经验。</p>
-                  </>
-                ) : (
-                  <>
-                    <h1>{lesson.title.split("\n").map((line, index) => <Fragment key={line}>{index > 0 && <br />}{line}</Fragment>)}</h1>
-                    <p className="lesson-deck">{lesson.deck}</p>
-                  </>
-                )}
+        <div className="academy-scroll">
+          <div className="academy-stage">
+            <article className="lecture-paper" aria-busy={loading}>
+              <div className="paper-spine" />
+              <header className="lecture-hero">
+                <div className="lecture-index"><span>{subject.symbol}</span>{focusTopic ? `${subject.campaign} · CURRICULUM FOCUS` : lesson.index}</div>
+                <h1>{(focusTopic || lesson.title).split("\n").map((line, index) => <Fragment key={`${line}-${index}`}>{index > 0 && <br />}{line}</Fragment>)}</h1>
+                <p>{focusTopic ? `从课程树进入“${focusTopic}”，以下内置讲义展示该学科的 CLIL 分析协议；连接讲师服务后会生成针对该小节的完整内容。` : lesson.deck}</p>
               </header>
 
-              {!generated && mode === "lecture" && (
-                <>
-                  <blockquote><p>{lesson.quote}</p><cite>{lesson.quoteSource}</cite></blockquote>
-                  <div className="lecture-sections">
-                    {lesson.sections.map((section) => (
-                      <section className="lecture-section" key={section.number}>
-                        <span>{section.number}</span>
-                        <div><h2>{section.title}</h2><p>{section.body}</p></div>
-                      </section>
-                    ))}
-                  </div>
-                  <section className="reflection">
-                    <span aria-hidden="true">✳</span>
-                    <div><small>今日留题 · QUESTION TO CARRY</small><p>{lesson.prompt}</p></div>
-                  </section>
-                </>
+              {!focusTopic && (
+                <blockquote className="academy-quote">
+                  <p>{lesson.quote}</p><cite>{lesson.quoteSource}</cite>
+                </blockquote>
               )}
 
-              {!generated && mode === "quiz" && (
-                <div className="quiz-list">
-                  {lesson.questions.map((item, index) => (
-                    <section className="quiz-card" key={item.question}>
-                      <div><span>0{index + 1}</span><small>{item.label}</small></div>
-                      <p>{item.question}</p>
-                      {answersOpen && <aside>{item.answer}</aside>}
+              <div className="dsl-content">
+                {blocks.map((block, index) => {
+                  if (block.type === "heading") return <h2 key={index}><span>{String(index + 1).padStart(2, "0")}</span>{block.value}</h2>;
+                  if (block.type === "paragraph") return <p key={index}>{renderInline(block.tokens)}</p>;
+                  const meta = LANGUAGE_META[block.language];
+                  const sentenceKey = `${block.language}:${block.sentence}`;
+                  return (
+                    <section className={`language-card card-${block.language.toLowerCase()}`} key={index} style={{ "--lang-color": meta.color } as React.CSSProperties}>
+                      <header>
+                        <span className="language-flag">{meta.flag}</span>
+                        <span><small>{block.language}</small><strong>{meta.name}</strong></span>
+                        <button type="button" onClick={() => void speak(block.sentence, block.language)} className={playingKey === sentenceKey ? "playing" : ""}>
+                          {playingKey === sentenceKey ? "Ⅱ" : "▶"}<span>整句朗读</span>
+                        </button>
+                      </header>
+                      <p className="language-sentence">{block.sentence}</p>
+                      <div className="word-breakdown">
+                        {block.entries.map((entry) => {
+                          const wordKey = `${block.language}:${entry.term}`;
+                          return (
+                            <div key={entry.term}>
+                              <button className="word-main" type="button" onClick={() => void inspectTerm({ value: entry.term, language: block.language })}>
+                                <strong>{entry.term}</strong><span>{entry.meaning}</span>
+                              </button>
+                              <p>{entry.grammar}</p>
+                              <button type="button" className={playingKey === wordKey ? "playing" : ""} onClick={() => void speak(entry.term, block.language)} aria-label={`朗读 ${entry.term}`}>♪</button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </section>
-                  ))}
-                  <button className="answer-button" type="button" onClick={() => setAnswersOpen((value) => !value)}>
-                    {answersOpen ? "收起答案" : "查看答案与解析"}<span aria-hidden="true">→</span>
-                  </button>
-                </div>
-              )}
+                  );
+                })}
+              </div>
 
-              {!generated && mode === "assignment" && (
-                <div className="assignment-card">
-                  <p className="assignment-task">{lesson.assignment.task}</p>
-                  <dl>
-                    <div><dt>产出规格</dt><dd>{lesson.assignment.format}</dd></div>
-                    <div><dt>评价标准</dt><dd>{lesson.assignment.criteria.map((item, index) => <span key={item}>{index + 1}. {item}</span>)}</dd></div>
-                    <div><dt>进阶挑战</dt><dd>{lesson.assignment.stretch}</dd></div>
-                  </dl>
-                </div>
-              )}
-
-              {loading && <div className="loading-veil"><span /><p>讲师正在检索、比较与组织语言…</p></div>}
-            </article>
-
-            <aside className="context-rail">
-              <section className="voice-card">
-                <div className="rail-title"><span>声线</span><small>VOICE</small></div>
-                <button className={`play-button ${speaking ? "playing" : ""}`} type="button" onClick={() => void toggleSpeech()}>
-                  <span className="play-icon" aria-hidden="true">{speaking ? "Ⅱ" : "▶"}</span>
-                  <span><strong>{speaking ? "正在朗读" : "聆听本讲"}</strong><small>{subject.voice} · {subject.voiceLabel}</small></span>
-                  <i className="wave" aria-hidden="true"><b /><b /><b /><b /><b /></i>
-                </button>
+              <section className="carry-question">
+                <span>✳</span><div><small>QUESTION TO CARRY · 今日留题</small><p>{lesson.question}</p></div>
               </section>
 
-              <section className="term-card">
-                <div className="rail-title"><span>罗塞塔词卡</span><small>ROSETTA NOTE</small></div>
-                <div className="languages">
-                  <p><small>CN</small><strong>{lesson.term.cn}</strong></p>
-                  <p><small>EN</small><strong>{lesson.term.en}</strong></p>
-                  <p><small>FR</small><strong>{lesson.term.fr}</strong></p>
-                  <p><small>DE</small><strong>{lesson.term.de}</strong></p>
-                </div>
-                <p className="term-note"><span aria-hidden="true">⌘</span>{lesson.term.note}</p>
-              </section>
-
-              <section className="source-card">
-                <div className="rail-title"><span>依据与延伸</span><small>{liveSources.length ? "GROUNDED" : "SOURCES"}</small></div>
-                <div className="source-list">
-                  {sources.map((source, index) => (
-                    <a href={source.url} target="_blank" rel="noreferrer" key={`${source.url}-${index}`}>
-                      <span>{String(index + 1).padStart(2, "0")}</span>
-                      <strong>{source.title}</strong>
-                      <i aria-hidden="true">↗</i>
+              <section className="visual-gallery">
+                <header><div><small>VISUAL GROUNDING</small><h2>视觉参考画廊</h2></div><span>{liveVisuals.length ? "LIVE SOURCES" : "CURATED · PUBLIC DOMAIN"}</span></header>
+                <div>
+                  {visuals.map((visual) => (
+                    <a href={visual.sourceUrl} target="_blank" rel="noreferrer" key={visual.sourceUrl}>
+                      <span className="visual-image">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={visual.src} alt={visual.title} />
+                      </span>
+                      <span className="visual-copy"><strong>{visual.title}</strong><small>{visual.caption}</small><i>{visual.sourceLabel} ↗</i></span>
                     </a>
                   ))}
                 </div>
-                <p className="grounding-status"><i />{liveSources.length ? "本讲已经 Google Search 核验" : "演示资料 · 官方来源直达"}</p>
               </section>
 
-              <section className="studio-card" aria-label="数字书房氛围">
-                <div className="studio-sun" />
-                <div className="studio-window"><i /><i /></div>
-                <div className="studio-desk"><span /><span /><span /></div>
-                <p><strong>MAC STUDY</strong><small>安静不是空白，而是思考正在发生。</small></p>
+              {loading && <div className="academy-loading"><span /><p>正在组织概念、语言与来源…</p></div>}
+            </article>
+
+            <aside className="learning-rail">
+              <section className="progress-card">
+                <header><span>战役进度</span><small>{subject.campaign} · 38%</small></header>
+                <div className="progress-track"><i /></div>
+                <p><strong>{subject.name}</strong><small>{subject.track}</small></p>
+                <button type="button" onClick={() => setCurriculumOpen(true)}>查看三级课程树 <span>→</span></button>
+              </section>
+
+              <section className="voice-strategy">
+                <header><span>多语声线</span><small>AUDIO ENGINE</small></header>
+                {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => (
+                  <button type="button" key={language} onClick={() => void speak(language === "CN" ? "知识为体，语言为用。" : language === "EN" ? "Knowledge gives language its purpose." : language === "FR" ? "La langue éclaire le savoir." : "Sprache macht Wissen beweglich.", language)}>
+                    <span>{language}</span><strong>{voiceForLanguage(language)}</strong><i className="mini-wave"><b /><b /><b /></i>
+                  </button>
+                ))}
+                <p><i />24 kHz PCM · SINGLETON · LRU 24</p>
+              </section>
+
+              <section className="protocol-card">
+                <header><span>教学协议</span><small>CLIL DSL · V1</small></header>
+                <dl>
+                  <div><dt>{"{{…|LANG}}"}</dt><dd>可发音行内术语</dd></div>
+                  <div><dt>{"[[LANG: …]]"}</dt><dd>三语拆解卡片</dd></div>
+                  <div><dt>CN → EN/FR/DE</dt><dd>母语理解，跨语校准</dd></div>
+                </dl>
+              </section>
+
+              <section className="source-panel">
+                <header><span>学术依据</span><small>{liveSources.length ? "GROUNDED" : "CURATED"}</small></header>
+                {(liveSources.length ? liveSources : visuals.map((visual) => ({ title: visual.title, url: visual.sourceUrl }))).slice(0, 4).map((source, index) => (
+                  <a href={source.url} target="_blank" rel="noreferrer" key={source.url}><span>0{index + 1}</span><strong>{source.title}</strong><i>↗</i></a>
+                ))}
+                <p><i />{liveSources.length ? "检索来源已连接" : "内置公共领域资料"}</p>
               </section>
             </aside>
           </div>
         </div>
 
-        <form className="ask-bar" onSubmit={submitQuestion}>
-          <label htmlFor="question">继续追问</label>
-          <div>
-            <span aria-hidden="true">⌘K</span>
-            <input id="question" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`向${subject.name}讲师提问…`} autoComplete="off" />
-            <button type="submit" disabled={!query.trim() || loading} aria-label="发送问题">↑</button>
-          </div>
-          <small>四语对照 · 检索核验 · 语音可读</small>
+        <form className="academy-ask" onSubmit={submitQuestion}>
+          <span className="ask-mark">✦</span>
+          <div><label htmlFor="academy-question">向领域教授追问</label><input id="academy-question" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`关于${subject.name}，继续追问一个概念、原文或案例…`} autoComplete="off" /></div>
+          <span className="ask-hints"><kbd>CLIL</kbd><kbd>EN</kbd><kbd>FR</kbd><kbd>DE</kbd></span>
+          <button type="submit" disabled={!query.trim() || loading} aria-label="发送问题">↑</button>
         </form>
       </section>
 
-      {toast && <div className="toast" role="status"><span />{toast}</div>}
+      {curriculumOpen && (
+        <ModalShell label="课程大纲" onClose={() => setCurriculumOpen(false)} wide>
+          <header className="modal-header curriculum-header">
+            <div><small>{subject.campaign} · ACADEMIC CAMPAIGN</small><h2>{subject.name}课程大纲</h2><p>{subject.track} · 三阶段进阶路径</p></div>
+            <button type="button" onClick={() => setCurriculumOpen(false)} aria-label="关闭">×</button>
+          </header>
+          <div className="curriculum-body">
+            <aside>
+              {currentCurriculum.map((level, index) => (
+                <button type="button" className={index === curriculumLevel ? "active" : ""} key={level.id} onClick={() => setCurriculumLevel(index)}>
+                  <span>{level.id}</span><strong>{level.name}</strong><small>{level.en}</small><i>{index < currentCurriculum.length - 1 ? "↓" : "◆"}</i>
+                </button>
+              ))}
+            </aside>
+            <section className="curriculum-topics">
+              <header><div><small>{currentCurriculum[curriculumLevel].id} · {currentCurriculum[curriculumLevel].en}</small><h3>{currentCurriculum[curriculumLevel].descriptor}</h3></div><span>点击小节开始授课</span></header>
+              <div>
+                {currentCurriculum[curriculumLevel].topics.map((topic, index) => (
+                  <button type="button" key={topic} onClick={() => chooseTopic(topic)}>
+                    <span>{String(index + 1).padStart(2, "0")}</span><div><strong>{topic}</strong><small>概念讲解 · 三语术语 · 视觉资料</small></div><i>↗</i>
+                  </button>
+                ))}
+              </div>
+              <footer><span>CLIL</span><p>选择课程后，讲师将以中文建立概念，再用 EN / FR / DE 校准术语边界。</p></footer>
+            </section>
+          </div>
+        </ModalShell>
+      )}
+
+      {activeTerm && termReport && (
+        <ModalShell label={`${activeTerm.value} 语言学深度报告`} onClose={() => setActiveTerm(null)}>
+          <header className="modal-header term-modal-header">
+            <div><small>{activeTerm.language} · TERM INSPECTION</small><h2>{activeTerm.value}</h2><p>{subject.name}语境 · {voiceForLanguage(activeTerm.language)} 声线</p></div>
+            <button type="button" onClick={() => setActiveTerm(null)} aria-label="关闭">×</button>
+          </header>
+          <div className="term-report-grid">
+            {([
+              ["学术定义", "DEFINITION", termReport.definition, "CN"],
+              ["词源与构词", "ETYMOLOGY", termReport.etymology, "CN"],
+              ["语法属性", "GRAMMAR", termReport.grammar, "CN"],
+              ["语义微析", "NUANCE", termReport.nuance, "CN"],
+            ] as Array<[string, string, string, LanguageCode]>).map(([title, en, value, language]) => (
+              <section key={en}><header><span>{title}<small>{en}</small></span><button type="button" onClick={() => void speak(value, language)}>♪</button></header><p>{value}</p></section>
+            ))}
+            <section className="term-example"><header><span>经典例句<small>ACADEMIC EXAMPLE</small></span><button type="button" onClick={() => void speak(termReport.example, activeTerm.language)}>▶</button></header><blockquote><p>{termReport.example}</p><cite>{termReport.translation}</cite></blockquote></section>
+          </div>
+          <footer className="term-modal-footer"><span className={termLoading ? "loading" : ""} /><p>{termLoading ? "正在尝试获取实时语言学报告…" : "内置报告可离线使用；外部术语接口为可选项。"}</p></footer>
+        </ModalShell>
+      )}
+
+      {notebookOpen && (
+        <ModalShell label="多语备忘录" onClose={() => setNotebookOpen(false)} wide>
+          <header className="modal-header notebook-header">
+            <div><small>LOCAL NOTEBOOK</small><h2>多语备忘录</h2><p>仅保存在当前设备 · 自动保存</p></div>
+            <button type="button" onClick={() => setNotebookOpen(false)} aria-label="关闭">×</button>
+          </header>
+          <div className="notebook-body">
+            <aside className="notes-list">
+              <div className="notes-tools"><label><span>⌕</span><input value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} placeholder="搜索笔记" /></label><button type="button" onClick={createNote}>＋</button></div>
+              <div className="notes-scroll">
+                {filteredNotes.map((note) => (
+                  <button type="button" className={note.id === activeNoteId ? "active" : ""} key={note.id} onClick={() => setActiveNoteId(note.id)}>
+                    <strong>{note.title || "未命名笔记"}</strong><p>{note.body || "开始记录…"}</p><span>{SUBJECTS.find((item) => item.id === note.subject)?.name} · {new Date(note.updatedAt).toLocaleDateString("zh-CN")}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
+            <section className="note-editor">
+              {activeNote && <>
+                <header><span>{SUBJECTS.find((item) => item.id === activeNote.subject)?.campaign} · {SUBJECTS.find((item) => item.id === activeNote.subject)?.name}</span><button type="button" onClick={deleteActiveNote}>删除</button></header>
+                <input value={activeNote.title} onChange={(event) => updateActiveNote({ title: event.target.value })} aria-label="笔记标题" />
+                <textarea value={activeNote.body} onChange={(event) => updateActiveNote({ body: event.target.value })} aria-label="笔记正文" placeholder="记录概念、词源、例句与仍未解决的问题…" />
+                <footer><span>CN · EN · FR · DE</span><small>{activeNote.body.length} 字符 · 已保存在本地</small></footer>
+              </>}
+            </section>
+          </div>
+        </ModalShell>
+      )}
+
+      {toast && <div className="academy-toast" role="status"><span />{toast}</div>}
     </main>
   );
 }
