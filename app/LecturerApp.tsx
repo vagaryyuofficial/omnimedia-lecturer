@@ -17,7 +17,14 @@ import {
   type TermReport,
   type VisualReference,
 } from "../lib/academy-data";
-import { playSpeech, stopSpeech, voiceForLanguage } from "../lib/audio-engine";
+import {
+  getAudioCapability,
+  playSpeech,
+  stopSpeech,
+  voiceProfileForLanguage,
+  type AudioCapability,
+  type PlaybackInfo,
+} from "../lib/audio-engine";
 import { parseLectureDsl, type InlineToken } from "../lib/dsl";
 import type { SubjectId, TeachingMode } from "../lib/prompts";
 
@@ -131,6 +138,12 @@ export default function LecturerApp() {
   const [focusTopic, setFocusTopic] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [audioCapability, setAudioCapability] = useState<AudioCapability>({
+    mode: "device",
+    cloudReady: false,
+    label: "设备增强声线",
+  });
+  const [lastPlayback, setLastPlayback] = useState<PlaybackInfo | null>(null);
   const [curriculumOpen, setCurriculumOpen] = useState(false);
   const [curriculumLevel, setCurriculumLevel] = useState(0);
   const [activeTerm, setActiveTerm] = useState<ActiveTerm | null>(null);
@@ -193,6 +206,16 @@ export default function LecturerApp() {
     const timer = window.setTimeout(() => setToast(null), 3_000);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    let active = true;
+    void getAudioCapability().then((capability) => {
+      if (active) setAudioCapability(capability);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
@@ -267,8 +290,14 @@ export default function LecturerApp() {
         language,
         onEnd: () => setPlayingKey((current) => current === key ? null : current),
       });
-      if (result === "device") setToast(`${voiceForLanguage(language)} 未连接 · 已使用设备 ${language} 语音`);
-      if (result === "remote") setToast(`${voiceForLanguage(language)} · 24kHz 原声播放`);
+      if (result.engine === "stopped") {
+        setPlayingKey(null);
+        return;
+      }
+      setLastPlayback(result);
+      setToast(result.engine === "neural"
+        ? `${result.label} · ${result.voice} · ${result.sampleRate || 24_000} Hz`
+        : `${result.label} · 当前实际声线：${result.voice}`);
     } catch {
       setPlayingKey(null);
       setToast("当前设备暂不支持语音播放");
@@ -483,13 +512,21 @@ export default function LecturerApp() {
               </section>
 
               <section className="voice-strategy">
-                <header><span>多语声线</span><small>AUDIO ENGINE</small></header>
-                {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => (
-                  <button type="button" key={language} onClick={() => void speak(language === "CN" ? "知识为体，语言为用。" : language === "EN" ? "Knowledge gives language its purpose." : language === "FR" ? "La langue éclaire le savoir." : "Sprache macht Wissen beweglich.", language)}>
-                    <span>{language}</span><strong>{voiceForLanguage(language)}</strong><i className="mini-wave"><b /><b /><b /></i>
-                  </button>
-                ))}
-                <p><i />24 kHz PCM · SINGLETON · LRU 24</p>
+                <header><span>真实多语声线</span><small>{audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small></header>
+                {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => {
+                  const profile = voiceProfileForLanguage(language);
+                  const sample = language === "CN" ? "知识为体，语言为用。" : language === "EN" ? "Knowledge gives language its purpose." : language === "FR" ? "La langue éclaire le savoir." : "Sprache macht Wissen beweglich.";
+                  const sampleKey = `${language}:${sample}`;
+                  return (
+                    <button type="button" className={playingKey === sampleKey ? "playing" : ""} key={language} onClick={() => void speak(sample, language)}>
+                      <span>{language}</span>
+                      <span className="voice-copy"><strong>{profile.role}</strong><small>{audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
+                      <i className="mini-wave"><b /><b /><b /></i>
+                    </button>
+                  );
+                })}
+                <p className={audioCapability.cloudReady ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : "分句朗读 · 跨语切换 · 真实声线检测"}</p>
+                {audioCapability.mode === "openai" && <p className="voice-disclosure">AI 生成语音 · 非真人录音</p>}
               </section>
 
               <section className="protocol-card">
@@ -552,7 +589,7 @@ export default function LecturerApp() {
       {activeTerm && termReport && (
         <ModalShell label={`${activeTerm.value} 语言学深度报告`} onClose={() => setActiveTerm(null)}>
           <header className="modal-header term-modal-header">
-            <div><small>{activeTerm.language} · TERM INSPECTION</small><h2>{activeTerm.value}</h2><p>{subject.name}语境 · {voiceForLanguage(activeTerm.language)} 声线</p></div>
+            <div><small>{activeTerm.language} · TERM INSPECTION</small><h2>{activeTerm.value}</h2><p>{subject.name}语境 · {voiceProfileForLanguage(activeTerm.language).role}</p></div>
             <button type="button" onClick={() => setActiveTerm(null)} aria-label="关闭">×</button>
           </header>
           <div className="term-report-grid">

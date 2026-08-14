@@ -849,14 +849,21 @@ button { color: inherit; }
 }
 
 .voice-strategy > button > span { color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: 6.5px; font-weight: 700; }
-.voice-strategy > button > strong { font-size: 8px; font-weight: 610; }
+.voice-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.voice-copy strong { overflow: hidden; color: #575254; font-size: 8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.voice-copy small { overflow: hidden; color: #9b9697; font-family: "SFMono-Regular", Consolas, monospace; font-size: 5.5px; text-overflow: ellipsis; white-space: nowrap; }
 .mini-wave { display: flex; align-items: center; justify-content: flex-end; gap: 2px; height: 14px; }
 .mini-wave b { display: block; width: 2px; height: 5px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 45%, white); }
 .mini-wave b:nth-child(2) { height: 11px; }
 .mini-wave b:nth-child(3) { height: 7px; }
+.voice-strategy > button.playing .mini-wave b { animation: audio-pulse 600ms ease-in-out infinite alternate; }
+.voice-strategy > button.playing .mini-wave b:nth-child(2) { animation-delay: 120ms; }
+.voice-strategy > button.playing .mini-wave b:nth-child(3) { animation-delay: 240ms; }
 .voice-strategy > p { display: flex; align-items: center; gap: 6px; margin: 0; padding: 9px 13px 11px; color: #9c9797; font-family: "SFMono-Regular", Consolas, monospace; font-size: 5.5px; }
 .voice-strategy > p i,
 .source-panel > p i { width: 4px; height: 4px; border-radius: 50%; background: #63a06f; box-shadow: 0 0 0 3px rgb(99 160 111 / 10%); }
+.voice-strategy > p.device-only i { background: #bd8b46; box-shadow: 0 0 0 3px rgb(189 139 70 / 11%); }
+.voice-strategy > p.voice-disclosure { padding-top: 0; color: #aaa5a5; font-size: 5px; letter-spacing: 0.02em; }
 
 .protocol-card dl { margin: 0; padding: 6px 12px 10px; }
 .protocol-card dl > div { display: grid; grid-template-columns: 81px minmax(0, 1fr); align-items: center; min-height: 34px; border-bottom: 1px solid rgb(0 0 0 / 5%); }

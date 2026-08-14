@@ -13,7 +13,8 @@
 - `{{术语|LANG}}` 行内术语与 `[[LANG: ...]]` 多语卡片 DSL 的前端解析
 - 可点击术语、单词和整句发音，以及定义、词源、语法、语义和例句深度弹窗
 - 24 kHz 单声道 PCM 解码、单例播放、重复点击停止和 24 项 LRU 内存缓存
-- 四语声线映射：中文 Kore、英语 Puck、法语 Charon、德语 Fenrir
+- 四语真实声线角色：中文 Marin、英语 Cedar、法语 Coral、德语 Sage；界面显示实际播放引擎与声线
+- 设备端自动等待声库加载、按音质评分选声、长句分段，并在中文段落内切换外语术语发音
 - 学术视觉画廊、来源卡片与可插拔的检索 grounding 数据
 - iPad / macOS 风格双栏备忘录，支持搜索、时间排序和 LocalStorage 自动保存
 - 不配置任何外部服务也可使用的八门内置示范课程与设备语音兜底
@@ -33,13 +34,17 @@ pnpm dev
 
 ## 可选：连接实时服务
 
-项目不绑定任何模型、SDK 或云平台。三个 HTTP 端点均可独立实现，也可以全部留空：
+项目不依赖 Gemini。三个通用 HTTP 端点均可独立实现，也可以只配置 OpenAI Speech API：
 
 ```dotenv
 LECTURER_TEXT_ENDPOINT=https://your-service.example/lecture
 LECTURER_SPEECH_ENDPOINT=https://your-service.example/speech
 LECTURER_TERM_ENDPOINT=https://your-service.example/term
 LECTURER_PROVIDER_TOKEN=optional_bearer_token
+
+# 或直接使用内置的 OpenAI Speech 适配器
+OPENAI_API_KEY=your_server_side_key
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
 ```
 
 ### 讲师端点
@@ -65,7 +70,11 @@ LECTURER_PROVIDER_TOKEN=optional_bearer_token
 
 ### 语音端点
 
-语音端点会收到 `text`、`language`、`voice`、`sampleRate: 24000`、`channels: 1` 和 `encoding: signed-int16-little-endian`。它可返回原始 PCM（`audio/pcm` 或 `application/octet-stream`），也可返回浏览器能够解码的 `audio/*` 文件。
+若配置 `LECTURER_SPEECH_ENDPOINT`，语音端点会收到 `text`、`language`、实际声线、角色、朗读指令、`sampleRate: 24000`、`channels: 1` 和 `encoding: signed-int16-little-endian`。它可返回原始 PCM（`audio/pcm` 或 `application/octet-stream`），也可返回浏览器能够解码的 `audio/*` 文件。
+
+若未配置通用端点但配置了 `OPENAI_API_KEY`，服务端会直接调用 OpenAI Speech API，输出 24 kHz PCM。密钥不会发送到浏览器。界面会明确披露播放的是 AI 生成语音，而不是真人录音。
+
+完全不配置云端语音时，应用会诚实标示“设备增强声线”，等待浏览器声库加载后选择当前语言下得分最高的本地声线，并对长句及中文中的外语片段分段朗读。最终音质仍取决于用户设备安装的系统声线。
 
 ### 术语端点
 
