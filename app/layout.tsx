@@ -15,19 +15,19 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: origin,
-    title: "全媒体领域学院 · Omnimedia Lecturer",
+    title: "深度语音专家 · Deep Voice Expert",
     description:
-      "以 CLIL 教学法连接八大学科与中、英、法、德四种语言的多模态学术学院。",
+      "以中文深度理解概念，用英、法、德术语、词源、维基知识图谱与多语语音建立可追溯的学习网络。",
     openGraph: {
-      title: "全媒体领域学院 · Omnimedia Lecturer",
-      description: "知识为体，语言为用：八大学科的 CLIL 多语学习平台。",
+      title: "深度语音专家 · Deep Voice Expert",
+      description: "像词典一样精确，像语言教练一样会讲：多语概念、语音与知识链接学习工具。",
       images: [new URL("/og.png", origin).toString()],
     },
     twitter: {
       card: "summary_large_image",
-      title: "全媒体领域学院",
+      title: "深度语音专家",
       description:
-        "Eight academic campaigns with Chinese-led EN / FR / DE terminology learning.",
+        "A multilingual voice lexicon for deep concept learning in Chinese, English, French and German.",
       images: [new URL("/og.png", origin).toString()],
     },
   };

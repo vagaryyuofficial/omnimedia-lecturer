@@ -34,6 +34,15 @@ import {
   type SpeechSessionState,
 } from "../lib/audio-engine";
 import { parseLectureDsl, type InlineToken } from "../lib/dsl";
+import {
+  clearOfflineVoicePacks,
+  downloadOfflineVoicePack,
+  getOfflineVoiceState,
+  OFFLINE_VOICE_PACKS,
+  offlineVoicePackFor,
+  setOfflineVoiceEnabled,
+  type OfflineVoiceState,
+} from "../lib/offline-voice-engine";
 import type { SubjectId, TeachingMode } from "../lib/prompts";
 
 type Source = { title: string; url: string };
@@ -141,11 +150,22 @@ const DEFAULT_SPEECH_MODELS = Object.fromEntries(
 
 const DEFAULT_NOTE: Note = {
   id: "welcome",
-  title: "第一则学院笔记",
+  title: "第一则深度笔记",
   body: "CLIL 不是把同一段话翻译三遍，而是让不同语言帮助我看见概念的边界。\n\n今天想继续追问：",
   subject: "literature",
   updatedAt: Date.now(),
 };
+
+const WIKIPEDIA_HOSTS: Record<LanguageCode, string> = {
+  CN: "zh.wikipedia.org",
+  EN: "en.wikipedia.org",
+  FR: "fr.wikipedia.org",
+  DE: "de.wikipedia.org",
+};
+
+function wikipediaHref(term: string, language: LanguageCode) {
+  return `https://${WIKIPEDIA_HOSTS[language]}/wiki/Special:Search?search=${encodeURIComponent(term.trim())}`;
+}
 
 function genericReport(term: ActiveTerm, subjectName: string): TermReport {
   return {
@@ -225,6 +245,11 @@ export default function LecturerApp() {
   });
   const [lastPlayback, setLastPlayback] = useState<PlaybackInfo | null>(null);
   const [speechSettingsOpen, setSpeechSettingsOpen] = useState(false);
+  const [offlineVoiceOpen, setOfflineVoiceOpen] = useState(false);
+  const [offlineVoiceState, setOfflineVoiceState] = useState<OfflineVoiceState>({ enabled: false, installed: {} });
+  const [offlineDownloading, setOfflineDownloading] = useState<LanguageCode | null>(null);
+  const [offlineProgress, setOfflineProgress] = useState<Partial<Record<LanguageCode, number>>>({});
+  const [offlineError, setOfflineError] = useState<string | null>(null);
   const [speechSession, setSpeechSession] = useState<SpeechSessionState>({ activeProvider: null, connections: {} });
   const [selectedSpeechProvider, setSelectedSpeechProvider] = useState<SpeechProviderId>("gemini");
   const [speechKeyInput, setSpeechKeyInput] = useState("");
@@ -253,6 +278,7 @@ export default function LecturerApp() {
     : undefined;
   const selectedSpeechMeta = SPEECH_PROVIDERS.find((provider) => provider.id === selectedSpeechProvider) || SPEECH_PROVIDERS[0];
   const selectedSpeechConnection = speechSession.connections[selectedSpeechProvider];
+  const offlineInstalledCount = Object.values(offlineVoiceState.installed).filter(Boolean).length;
 
   const modeDsl = mode === "case"
     ? lesson.caseDsl
@@ -288,6 +314,13 @@ export default function LecturerApp() {
       setNotesHydrated(true);
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const syncOfflineState = () => setOfflineVoiceState(getOfflineVoiceState());
+    syncOfflineState();
+    window.addEventListener("deep-voice-offline-state", syncOfflineState);
+    return () => window.removeEventListener("deep-voice-offline-state", syncOfflineState);
   }, []);
 
   useEffect(() => {
@@ -338,6 +371,7 @@ export default function LecturerApp() {
       setCurriculumOpen(false);
       setNotebookOpen(false);
       setSpeechSettingsOpen(false);
+      setOfflineVoiceOpen(false);
       setActiveTerm(null);
     };
     window.addEventListener("keydown", close);
@@ -383,7 +417,7 @@ export default function LecturerApp() {
       setLiveVisuals(data.visuals || []);
       setToast("已完成检索核验与 CLIL 术语编排");
     } catch {
-      setToast("当前使用学院内置课程 · 未连接外部讲师服务");
+      setToast("当前使用内置知识课程 · 未连接外部讲师服务");
     } finally {
       setLoading(false);
     }
@@ -472,6 +506,45 @@ export default function LecturerApp() {
     setToast(`已切换到 ${speechProviderLabel(provider)}`);
   }
 
+  async function installOfflinePack(language: LanguageCode) {
+    setOfflineDownloading(language);
+    setOfflineError(null);
+    setOfflineProgress((current) => ({ ...current, [language]: 0 }));
+    try {
+      const state = await downloadOfflineVoicePack(language, (progress) => {
+        setOfflineProgress((current) => ({ ...current, [language]: Math.max(1, Math.round(progress)) }));
+      });
+      setOfflineVoiceState(state);
+      setOfflineProgress((current) => ({ ...current, [language]: 100 }));
+      setLastPlayback(null);
+      setToast(`${offlineVoicePackFor(language).name} 已下载并启用`);
+    } catch (error) {
+      setOfflineError(error instanceof Error ? error.message : "离线语音包下载失败，请检查网络与可用存储空间。");
+    } finally {
+      setOfflineDownloading(null);
+    }
+  }
+
+  function toggleOfflineVoices() {
+    if (!offlineInstalledCount) {
+      setOfflineError("请先下载至少一个语言包。");
+      return;
+    }
+    const state = setOfflineVoiceEnabled(!offlineVoiceState.enabled);
+    setOfflineVoiceState(state);
+    setLastPlayback(null);
+    setToast(state.enabled ? "离线语音包已启用；云端连接仍然优先" : "离线语音包已停用");
+  }
+
+  async function clearOfflineVoices() {
+    const state = await clearOfflineVoicePacks();
+    setOfflineVoiceState(state);
+    setOfflineProgress({});
+    setOfflineError(null);
+    setLastPlayback(null);
+    setToast("全部离线语音包与浏览器模型缓存已清除");
+  }
+
   async function inspectTerm(term: ActiveTerm) {
     setActiveTerm(term);
     setTermReport(termReportFor(term, subject.name));
@@ -498,6 +571,13 @@ export default function LecturerApp() {
       return (
         <span className={`term-pill lang-${token.language.toLowerCase()}`} key={`${key}-${index}`}>
           <button type="button" onClick={() => void inspectTerm(token)}>{token.value}<small>{token.language}</small></button>
+          <a
+            href={wikipediaHref(token.value, token.language)}
+            target="_blank"
+            rel="noreferrer"
+            title={`在 ${token.language} 维基百科检索 ${token.value}`}
+            aria-label={`在维基百科检索 ${token.value}`}
+          >W</a>
           <button
             type="button"
             className={playingKey === key ? "playing" : ""}
@@ -542,13 +622,13 @@ export default function LecturerApp() {
 
   return (
     <main className="academy-app" style={{ "--accent": subject.accent } as React.CSSProperties}>
-      <aside className="academy-sidebar" aria-label="八大学科学术战役">
+      <aside className="academy-sidebar" aria-label="八大学科知识领域">
         <div className="academy-brand">
-          <span className="academy-mark">OL</span>
-          <span><strong>全媒体领域学院</strong><small>OMNIMEDIA LECTURER</small></span>
+          <span className="academy-mark">深语</span>
+          <span><strong>深度语音专家</strong><small>DEEP VOICE EXPERT</small></span>
         </div>
 
-        <p className="campaign-label">ACADEMIC CAMPAIGNS <span>08</span></p>
+        <p className="campaign-label">KNOWLEDGE DOMAINS <span>08</span></p>
         <nav className="campaign-list">
           {SUBJECTS.map((item) => (
             <button
@@ -577,7 +657,7 @@ export default function LecturerApp() {
 
       <section className="academy-desk">
         <header className="academy-topbar">
-          <div className="mobile-academy-brand"><span>OL</span><strong>领域学院</strong></div>
+          <div className="mobile-academy-brand"><span>深语</span><strong>语音专家</strong></div>
           <div className="course-path"><small>{subject.campaign}</small><span>{subject.name}</span><i>/</i><strong>{focusTopic || lesson.index.split(" · ").slice(-1)[0]}</strong></div>
           <div className="quick-actions" aria-label="快捷学术指令">
             {QUICK_ACTIONS.map((action) => (
@@ -639,6 +719,7 @@ export default function LecturerApp() {
                                 <strong>{entry.term}</strong><span>{entry.meaning}</span>
                               </button>
                               <p>{entry.grammar}</p>
+                              <a href={wikipediaHref(entry.term, block.language)} target="_blank" rel="noreferrer" title="在维基百科检索" aria-label={`在维基百科检索 ${entry.term}`}>W</a>
                               <button type="button" className={playingKey === wordKey ? "playing" : ""} onClick={() => void speak(entry.term, block.language)} aria-label={`朗读 ${entry.term}`}>♪</button>
                             </div>
                           );
@@ -673,7 +754,7 @@ export default function LecturerApp() {
 
             <aside className="learning-rail">
               <section className="progress-card">
-                <header><span>战役进度</span><small>{subject.campaign} · 38%</small></header>
+                <header><span>学习进度</span><small>{subject.campaign} · 38%</small></header>
                 <div className="progress-track"><i /></div>
                 <p><strong>{subject.name}</strong><small>{subject.track}</small></p>
                 <button type="button" onClick={() => setCurriculumOpen(true)}>查看三级课程树 <span>→</span></button>
@@ -683,8 +764,9 @@ export default function LecturerApp() {
                 <header>
                   <span>真实多语声线</span>
                   <span className="voice-header-actions">
-                    <small>{speechSession.activeProvider ? `${speechSession.activeProvider.toUpperCase()} TTS` : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
-                    <button type="button" onClick={() => { setSpeechError(null); setSpeechSettingsOpen(true); }}>{Object.keys(speechSession.connections).length ? "管理" : "连接"}</button>
+                    <small>{speechSession.activeProvider ? `${speechSession.activeProvider.toUpperCase()} TTS` : offlineVoiceState.enabled && offlineInstalledCount ? "OFFLINE ONNX" : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
+                    <button type="button" onClick={() => { setOfflineError(null); setOfflineVoiceOpen(true); }}>离线包</button>
+                    <button type="button" onClick={() => { setSpeechError(null); setSpeechSettingsOpen(true); }}>{Object.keys(speechSession.connections).length ? "云端" : "连接"}</button>
                   </span>
                 </header>
                 {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => {
@@ -694,12 +776,12 @@ export default function LecturerApp() {
                   return (
                     <button type="button" className={playingKey === sampleKey ? "playing" : ""} key={language} onClick={() => void speak(sample, language)}>
                       <span>{language}</span>
-                      <span className="voice-copy"><strong>{profile.role}</strong><small>{activeSpeechConnection ? voiceNameForConnection(language, activeSpeechConnection) : audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
+                      <span className="voice-copy"><strong>{profile.role}</strong><small>{activeSpeechConnection ? voiceNameForConnection(language, activeSpeechConnection) : offlineVoiceState.enabled && offlineVoiceState.installed[language] ? offlineVoicePackFor(language).name : audioCapability.cloudReady ? profile.cloudVoice : "自动选择设备最佳声线"}</small></span>
                       <i className="mini-wave"><b /><b /><b /></i>
                     </button>
                   );
                 })}
-                <p className={audioCapability.cloudReady ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : "分句朗读 · 跨语切换 · 真实声线检测"}</p>
+                <p className={audioCapability.cloudReady || offlineVoiceState.enabled && offlineInstalledCount ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : offlineVoiceState.enabled && offlineInstalledCount ? `${offlineInstalledCount} 个本地语音包 · 无需联网合成` : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : "分句朗读 · 跨语切换 · 真实声线检测"}</p>
                 {audioCapability.cloudReady && <p className="voice-disclosure">AI 生成语音 · 非真人录音 · 使用者自备服务 Key</p>}
               </section>
 
@@ -725,7 +807,7 @@ export default function LecturerApp() {
 
         <form className="academy-ask" onSubmit={submitQuestion}>
           <span className="ask-mark">✦</span>
-          <div><label htmlFor="academy-question">向领域教授追问</label><input id="academy-question" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`关于${subject.name}，继续追问一个概念、原文或案例…`} autoComplete="off" /></div>
+          <div><label htmlFor="academy-question">向深度语音专家追问</label><input id="academy-question" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`关于${subject.name}，继续追问一个词语、概念、原文或案例…`} autoComplete="off" /></div>
           <span className="ask-hints"><kbd>CLIL</kbd><kbd>EN</kbd><kbd>FR</kbd><kbd>DE</kbd></span>
           <button type="submit" disabled={!query.trim() || loading} aria-label="发送问题">↑</button>
         </form>
@@ -761,9 +843,9 @@ export default function LecturerApp() {
       )}
 
       {speechSettingsOpen && (
-        <ModalShell label="多模型语音中心" onClose={() => setSpeechSettingsOpen(false)} wide>
+        <ModalShell label="云端语音中心" onClose={() => setSpeechSettingsOpen(false)} wide>
           <header className="modal-header speech-modal-header">
-            <div><small>VOICE PROVIDERS · SESSION ONLY</small><h2>多模型语音中心</h2><p>内容模型与语音引擎彼此独立；任选一个语音服务，整座学院立即切换。</p></div>
+            <div><small>VOICE PROVIDERS · SESSION ONLY</small><h2>云端语音中心</h2><p>云端服务是可选增强；离线语音包不需要账户或 API Key。</p></div>
             <button type="button" onClick={() => setSpeechSettingsOpen(false)} aria-label="关闭">×</button>
           </header>
           <div className="speech-hub">
@@ -791,9 +873,9 @@ export default function LecturerApp() {
                 <p>可用于生成课程内容，但官方 API 暂无直接语音输出；因此不伪装成语音引擎。</p>
               </section>
               <section className="model-only-note open-voice-note">
-                <span>OPEN WEIGHTS</span>
-                <strong>CosyVoice / F5-TTS</strong>
-                <p>开源权重仍需本地或云端部署。本应用坚持零模型部署，因此先接对应的托管语音 API。</p>
+                <span>LOCAL ONNX</span>
+                <strong>浏览器离线语音包</strong>
+                <p>中、英、法、德语音包可下载到浏览器缓存，在本机完成合成；入口位于右侧声线卡的“离线包”。</p>
               </section>
             </aside>
 
@@ -850,6 +932,42 @@ export default function LecturerApp() {
         </ModalShell>
       )}
 
+      {offlineVoiceOpen && (
+        <ModalShell label="离线语音包" onClose={() => setOfflineVoiceOpen(false)} wide>
+          <header className="modal-header offline-voice-header">
+            <div><small>DOWNLOADABLE · LOCAL ONNX</small><h2>离线语音包</h2><p>首次下载需要网络；完成后，模型在浏览器本地运行，无需账户、API Key 或云端请求。</p></div>
+            <button type="button" onClick={() => setOfflineVoiceOpen(false)} aria-label="关闭">×</button>
+          </header>
+          <div className="offline-voice-manager">
+            <section className="offline-summary">
+              <div><span className={offlineVoiceState.enabled && offlineInstalledCount ? "ready" : ""}>◉</span><p><strong>{offlineInstalledCount ? `${offlineInstalledCount} 个语音包已就绪` : "尚未下载语音包"}</strong><small>{offlineVoiceState.enabled && offlineInstalledCount ? "本地 ONNX 合成已启用；已连接的云端服务优先。" : "可按语言分别下载，未安装语言继续使用设备声线。"}</small></p></div>
+              <span>
+                <button type="button" onClick={toggleOfflineVoices} disabled={!offlineInstalledCount}>{offlineVoiceState.enabled ? "停用离线合成" : "启用离线合成"}</button>
+                {offlineInstalledCount > 0 && <button className="clear-offline" type="button" onClick={() => void clearOfflineVoices()}>清空全部</button>}
+              </span>
+            </section>
+            <div className="offline-pack-grid">
+              {OFFLINE_VOICE_PACKS.map((pack) => {
+                const installed = Boolean(offlineVoiceState.installed[pack.language]);
+                const downloading = offlineDownloading === pack.language;
+                const progress = offlineProgress[pack.language] || 0;
+                return (
+                  <article className={installed ? "installed" : ""} key={pack.language}>
+                    <header><span>{pack.language}</span><div><strong>{pack.name}</strong><small>{pack.locale} · {pack.size}</small></div><i>{installed ? "已下载" : "可选包"}</i></header>
+                    <p>{pack.description}</p>
+                    <dl><div><dt>模型</dt><dd>{pack.model}</dd></div><div><dt>许可</dt><dd><a href={pack.licenseUrl} target="_blank" rel="noreferrer">{pack.license} ↗</a></dd></div></dl>
+                    {downloading && <div className="offline-download-progress"><span style={{ width: `${Math.max(3, progress)}%` }} /><small>{progress > 0 ? `${progress}%` : "准备下载…"}</small></div>}
+                    <footer><a href={pack.sourceUrl} target="_blank" rel="noreferrer">模型卡与来源 ↗</a><button type="button" disabled={installed || offlineDownloading !== null} onClick={() => void installOfflinePack(pack.language)}>{installed ? "已缓存在本机" : downloading ? "正在下载…" : "下载语音包"}</button></footer>
+                  </article>
+                );
+              })}
+            </div>
+            {offlineError && <p className="offline-error" role="alert">{offlineError}</p>}
+            <footer className="offline-license-note"><span>LICENSE</span><p>中文包采用 Apache-2.0；MMS 英、法、德模型采用 CC-BY-NC-4.0，仅适用于非商业用途。软件代码仍采用 MIT 许可，模型权利与代码许可彼此独立。</p></footer>
+          </div>
+        </ModalShell>
+      )}
+
       {activeTerm && termReport && (
         <ModalShell label={`${activeTerm.value} 语言学深度报告`} onClose={() => setActiveTerm(null)}>
           <header className="modal-header term-modal-header">
@@ -867,7 +985,11 @@ export default function LecturerApp() {
             ))}
             <section className="term-example"><header><span>经典例句<small>ACADEMIC EXAMPLE</small></span><button type="button" onClick={() => void speak(termReport.example, activeTerm.language)}>▶</button></header><blockquote><p>{termReport.example}</p><cite>{termReport.translation}</cite></blockquote></section>
           </div>
-          <footer className="term-modal-footer"><span className={termLoading ? "loading" : ""} /><p>{termLoading ? "正在尝试获取实时语言学报告…" : "内置报告可离线使用；外部术语接口为可选项。"}</p></footer>
+          <nav className="wikipedia-links" aria-label="维基百科深度链接">
+            <span>在维基百科继续探索</span>
+            {(["CN", "EN", "FR", "DE"] as LanguageCode[]).map((language) => <a href={wikipediaHref(activeTerm.value, language)} target="_blank" rel="noreferrer" key={language}>{language} Wikipedia ↗</a>)}
+          </nav>
+          <footer className="term-modal-footer"><span className={termLoading ? "loading" : ""} /><p>{termLoading ? "正在尝试获取实时语言学报告…" : "内置报告可离线使用；术语已连接四语维基百科检索。"}</p></footer>
         </ModalShell>
       )}
 
