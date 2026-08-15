@@ -36,6 +36,11 @@ test("renders the Deep Language Expert learning workspace", async () => {
   assert.match(html, /案例分析/);
   assert.match(html, /学术精读/);
   assert.match(html, /界面语言/);
+  assert.match(html, /data-text-size="standard"/);
+  assert.match(html, /文字大小/);
+  assert.match(html, /标准文字/);
+  assert.match(html, /大号文字/);
+  assert.match(html, /特大文字/);
   assert.match(html, /真实多语声线/);
   assert.match(html, />离线包</);
   assert.match(html, /Italiano/);

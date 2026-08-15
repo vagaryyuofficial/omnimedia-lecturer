@@ -51,6 +51,7 @@ import type { SubjectId, TeachingMode } from "../lib/prompts";
 
 type Source = { title: string; url: string };
 type UiLocale = "zh" | "en";
+type TextSize = "standard" | "large" | "extra";
 type ActiveTerm = { value: string; language: LanguageCode };
 type Note = {
   id: string;
@@ -189,7 +190,14 @@ const NOTES_STORAGE_KEY = "deep-language-expert-notes-v1";
 const LEGACY_NOTES_STORAGE_KEYS = ["deep-voice-expert-notes-v1", "omnimedia-academy-notes-v1"];
 const INTERFACE_LANGUAGE_KEY = "deep-language-interface-language";
 const LEGACY_INTERFACE_LANGUAGE_KEY = "deep-voice-interface-language";
+const TEXT_SIZE_KEY = "deep-language-text-size";
 const OFFLINE_VOICE_STATE_EVENT = "deep-language-offline-state";
+
+const TEXT_SIZE_OPTIONS: Array<{ id: TextSize; label: string; labelEn: string; mark: string }> = [
+  { id: "standard", label: "标准文字", labelEn: "Standard text", mark: "A" },
+  { id: "large", label: "大号文字", labelEn: "Large text", mark: "A+" },
+  { id: "extra", label: "特大文字", labelEn: "Extra-large text", mark: "A++" },
+];
 
 const WIKIPEDIA_HOSTS: Record<LanguageCode, string> = {
   CN: "zh.wikipedia.org",
@@ -291,6 +299,7 @@ function ModalShell({
 
 export default function LecturerApp() {
   const [locale, setLocale] = useState<UiLocale>("zh");
+  const [textSize, setTextSize] = useState<TextSize>("standard");
   const [subjectId, setSubjectId] = useState<SubjectId>("literature");
   const [mode, setMode] = useState<TeachingMode>("concept");
   const [query, setQuery] = useState("");
@@ -374,6 +383,14 @@ export default function LecturerApp() {
     window.localStorage.removeItem(LEGACY_INTERFACE_LANGUAGE_KEY);
     document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
     const frame = window.requestAnimationFrame(() => setLocale(next));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(TEXT_SIZE_KEY);
+    const next: TextSize = saved === "large" || saved === "extra" ? saved : "standard";
+    window.localStorage.setItem(TEXT_SIZE_KEY, next);
+    const frame = window.requestAnimationFrame(() => setTextSize(next));
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
@@ -470,6 +487,13 @@ export default function LecturerApp() {
     setGeneratedDsl(null);
     setFocusTopic(null);
     setToast(next === "zh" ? "界面已切换为中文" : "Interface switched to English");
+  }
+
+  function changeTextSize(next: TextSize) {
+    setTextSize(next);
+    window.localStorage.setItem(TEXT_SIZE_KEY, next);
+    const label = TEXT_SIZE_OPTIONS.find((option) => option.id === next);
+    setToast(locale === "zh" ? `文字大小：${label?.label}` : `Text size: ${label?.labelEn}`);
   }
 
   function selectSubject(next: SubjectId) {
@@ -723,7 +747,7 @@ export default function LecturerApp() {
   }
 
   return (
-    <main className="academy-app" style={{ "--accent": subject.accent } as React.CSSProperties}>
+    <main className="academy-app" data-text-size={textSize} style={{ "--accent": subject.accent } as React.CSSProperties}>
       <aside className="academy-sidebar" aria-label={ui("八大学科知识领域", "Eight knowledge domains")}>
         <div className="academy-brand">
           <span className="academy-mark">深语</span>
@@ -775,6 +799,21 @@ export default function LecturerApp() {
             ))}
           </div>
           <div className="topbar-tools">
+            <div className="text-size-switch" role="group" aria-label={ui("文字大小", "Text size")}>
+              {TEXT_SIZE_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  key={option.id}
+                  className={textSize === option.id ? "active" : ""}
+                  onClick={() => changeTextSize(option.id)}
+                  aria-pressed={textSize === option.id}
+                  aria-label={locale === "zh" ? option.label : option.labelEn}
+                  title={locale === "zh" ? option.label : option.labelEn}
+                >
+                  {option.mark}
+                </button>
+              ))}
+            </div>
             <div className="locale-switch" role="group" aria-label={ui("界面语言", "Interface language")}>
               <button type="button" className={locale === "zh" ? "active" : ""} onClick={() => changeLocale("zh")}>中</button>
               <button type="button" className={locale === "en" ? "active" : ""} onClick={() => changeLocale("en")}>EN</button>
