@@ -1,6 +1,4 @@
 import type { LanguageCode } from "./academy-data";
-import OfflineTtsWorker from "./offline-tts.worker?worker";
-import { pinyin } from "pinyin-pro";
 
 export type OfflineVoicePack = {
   language: LanguageCode;
@@ -88,6 +86,7 @@ const STORAGE_KEY = "deep-voice-offline-packs-v1";
 const CACHE_KEY = "transformers-cache";
 const pending = new Map<string, PendingRequest>();
 let worker: Worker | null = null;
+let workerPromise: Promise<Worker> | null = null;
 
 function defaultState(): OfflineVoiceState {
   return { enabled: false, installed: {} };
@@ -116,44 +115,53 @@ export function setOfflineVoiceEnabled(enabled: boolean) {
   return writeState({ ...state, enabled });
 }
 
-function getWorker() {
+async function getWorker() {
   if (worker) return worker;
-  worker = new OfflineTtsWorker({ name: "deep-voice-offline-tts" });
-  worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-    const response = event.data;
-    const request = pending.get(response.id);
-    if (!request) return;
-    if (response.type === "progress") {
-      request.onProgress?.(response.progress || 0, response.loaded || 0, response.total || 0);
-      return;
-    }
-    pending.delete(response.id);
-    if (response.type === "error") {
-      request.reject(new Error(response.message || "离线语音包初始化失败。"));
-      return;
-    }
-    request.resolve({ audio: response.audio, sampleRate: response.sampleRate });
-  };
-  worker.onerror = (event) => {
-    const error = new Error(event.message || "离线语音工作线程发生错误。");
-    pending.forEach((request) => request.reject(error));
-    pending.clear();
-    worker?.terminate();
-    worker = null;
-  };
-  return worker;
+  workerPromise ||= import("./offline-tts.worker?worker").then(({ default: OfflineTtsWorker }) => {
+    const activeWorker = new OfflineTtsWorker({ name: "deep-voice-offline-tts" });
+    activeWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const response = event.data;
+      const request = pending.get(response.id);
+      if (!request) return;
+      if (response.type === "progress") {
+        request.onProgress?.(response.progress || 0, response.loaded || 0, response.total || 0);
+        return;
+      }
+      pending.delete(response.id);
+      if (response.type === "error") {
+        request.reject(new Error(response.message || "离线语音包初始化失败。"));
+        return;
+      }
+      request.resolve({ audio: response.audio, sampleRate: response.sampleRate });
+    };
+    activeWorker.onerror = (event) => {
+      const error = new Error(event.message || "离线语音工作线程发生错误。");
+      pending.forEach((request) => request.reject(error));
+      pending.clear();
+      activeWorker.terminate();
+      worker = null;
+      workerPromise = null;
+    };
+    worker = activeWorker;
+    return activeWorker;
+  }).catch((error) => {
+    workerPromise = null;
+    throw error;
+  });
+  return workerPromise;
 }
 
-function sendRequest(
+async function sendRequest(
   type: "prepare" | "synthesize",
   language: LanguageCode,
   text?: string,
   onProgress?: PendingRequest["onProgress"],
 ) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const activeWorker = await getWorker();
   return new Promise<{ audio?: Float32Array; sampleRate?: number }>((resolve, reject) => {
     pending.set(id, { resolve, reject, onProgress });
-    getWorker().postMessage({ id, type, language, text });
+    activeWorker.postMessage({ id, type, language, text });
   });
 }
 
@@ -176,7 +184,7 @@ export async function synthesizeOfflineSpeech(text: string, language: LanguageCo
   const state = getOfflineVoiceState();
   if (!state.enabled || !state.installed[language]) throw new Error("请先下载并启用对应语言的离线语音包。");
   const input = language === "CN"
-    ? pinyin(text, { toneType: "num", type: "array", nonZh: "consecutive" }).join("")
+    ? (await import("pinyin-pro")).pinyin(text, { toneType: "num", type: "array", nonZh: "consecutive" }).join("")
     : text;
   const output = await sendRequest("synthesize", language, input);
   if (!output.audio || !output.sampleRate) throw new Error("离线语音包没有返回有效音频。");
@@ -186,6 +194,7 @@ export async function synthesizeOfflineSpeech(text: string, language: LanguageCo
 export async function clearOfflineVoicePacks() {
   worker?.terminate();
   worker = null;
+  workerPromise = null;
   pending.forEach((request) => request.reject(new Error("离线语音缓存已清除。")));
   pending.clear();
   if ("caches" in window) await window.caches.delete(CACHE_KEY);
