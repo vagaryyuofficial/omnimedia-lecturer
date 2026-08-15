@@ -1,4 +1,5 @@
 import type { LanguageCode } from "./academy-data";
+import { getOfflineVoiceState, offlineVoicePackFor, synthesizeOfflineSpeech } from "./offline-voice-engine";
 
 export type SpeechProviderId = "gemini" | "qwen" | "fish" | "openai";
 export type SpeechConnection = {
@@ -26,7 +27,7 @@ export type AudioCapability = {
   label: string;
 };
 export type PlaybackInfo = {
-  engine: "neural" | "device" | "stopped";
+  engine: "neural" | "offline" | "device" | "stopped";
   voice: string;
   label: string;
   sampleRate?: number;
@@ -379,11 +380,44 @@ async function speakOnDevice(text: string, language: LanguageCode, key: string, 
   return { engine: "device", voice: primaryVoice?.name || `系统默认 ${VOICE_PROFILES[language].locale}`, label: "设备增强声线" };
 }
 
+async function loadOfflineAudio(text: string, language: LanguageCode) {
+  const key = `offline:${language}:${text}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const chunks = speechChunks(text, language);
+  const rendered: Array<{ audio: Float32Array; sampleRate: number }> = [];
+  for (const chunk of chunks) {
+    rendered.push(await synthesizeOfflineSpeech(chunk.text, chunk.language));
+  }
+  const sampleRate = rendered[0]?.sampleRate || 16_000;
+  const pauseSamples = Math.round(sampleRate * 0.055);
+  const sampleCount = rendered.reduce((total, part, index) => total + part.audio.length + (index ? pauseSamples : 0), 0);
+  const audioContext = getContext();
+  const buffer = audioContext.createBuffer(1, sampleCount, sampleRate);
+  const channel = buffer.getChannelData(0);
+  let offset = 0;
+  rendered.forEach((part, index) => {
+    if (index) offset += pauseSamples;
+    channel.set(part.audio, offset);
+    offset += part.audio.length;
+  });
+  const result = {
+    buffer,
+    engine: "offline",
+    voice: offlineVoicePackFor(language).name,
+    sampleRate,
+  };
+  cache.set(key, result);
+  return result;
+}
+
 export async function playSpeech(options: { text: string; language: LanguageCode; onEnd?: () => void }): Promise<PlaybackInfo> {
   const spokenText = options.text.trim();
   const session = getSessionSpeechState();
   const connection = session.activeProvider ? session.connections[session.activeProvider] : undefined;
-  const key = `${connection?.provider || "device"}:${options.language}:${spokenText}`;
+  const offlineState = getOfflineVoiceState();
+  const offlineReady = !connection && offlineState.enabled && Boolean(offlineState.installed[options.language]);
+  const key = `${connection?.provider || (offlineReady ? "offline" : "device")}:${options.language}:${spokenText}`;
   if (!spokenText) return { engine: "stopped", voice: "", label: "已停止" };
   if (currentKey === key) {
     stopCurrent();
@@ -392,6 +426,28 @@ export async function playSpeech(options: { text: string; language: LanguageCode
   }
   stopCurrent();
   currentKey = key;
+  if (offlineReady) {
+    try {
+      const audioContext = getContext();
+      const audio = await loadOfflineAudio(spokenText, options.language);
+      if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
+      await audioContext.resume().catch(() => undefined);
+      const source = audioContext.createBufferSource();
+      source.buffer = audio.buffer;
+      source.connect(audioContext.destination);
+      source.onended = () => {
+        if (currentKey === key) currentKey = null;
+        currentSource = null;
+        options.onEnd?.();
+      };
+      currentSource = source;
+      source.start();
+      return { engine: "offline", voice: audio.voice, label: "本地 ONNX 语音包", sampleRate: audio.sampleRate };
+    } catch {
+      if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
+      return speakOnDevice(spokenText, options.language, key, options.onEnd);
+    }
+  }
   if (!connection && knownCapability?.mode === "device") return speakOnDevice(spokenText, options.language, key, options.onEnd);
   const audioContext = getContext();
   const resume = audioContext.resume().catch(() => undefined);

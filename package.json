@@ -1,6 +1,6 @@
 {
-  "name": "omnimedia-lecturer",
-  "version": "0.1.0",
+  "name": "deep-voice-expert",
+  "version": "0.2.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -13,6 +13,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "pinyin-pro": "^3.29.1",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

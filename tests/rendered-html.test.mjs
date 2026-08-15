@@ -13,14 +13,14 @@ async function render(path = "/", init) {
   );
 }
 
-test("renders the Omnimedia Lecturer academy", async () => {
+test("renders the Deep Voice Expert learning workspace", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<html[^>]+lang="zh-CN"/i);
-  assert.match(html, /<title>全媒体领域学院 · Omnimedia Lecturer<\/title>/i);
+  assert.match(html, /<title>深度语音专家 · Deep Voice Expert<\/title>/i);
   assert.match(html, /文学名著/);
   assert.match(html, /经济学/);
   assert.match(html, /心理学/);
@@ -34,6 +34,10 @@ test("renders the Omnimedia Lecturer academy", async () => {
   assert.match(html, /案例分析/);
   assert.match(html, /学术精读/);
   assert.match(html, /真实多语声线/);
+  assert.match(html, />离线包</);
+  assert.match(html, /https:\/\/zh\.wikipedia\.org\/wiki\/Special:Search\?search=/);
+  assert.match(html, /https:\/\/en\.wikipedia\.org\/wiki\/Special:Search\?search=/);
+  assert.match(html, /在维基百科检索/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });
 

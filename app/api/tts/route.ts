@@ -108,7 +108,7 @@ async function requestGeminiSpeech(apiKey: string, text: string, language: Langu
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
-      "x-goog-api-client": "omnimedia-lecturer/0.2.0",
+      "x-goog-api-client": "deep-voice-expert/0.2.0",
     },
     body: JSON.stringify({
       contents: [{ parts: [{ text: `${profile.instructions}\n\n${RECITATION_PREFIX[language]}\n${text}` }] }],
