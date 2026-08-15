@@ -2,6 +2,11 @@ name: Desktop release / 桌面版发布
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing v* tag to publish or repair (leave empty for a build-only run)"
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -118,10 +123,20 @@ jobs:
 
   release:
     name: Publish GitHub Release / 发布 GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: package
     runs-on: ubuntu-24.04
     steps:
+      - name: Verify manual release tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$TAG" == v* ]]
+          gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null
+
       - name: Download all installers
         uses: actions/download-artifact@v4
         with:
@@ -137,7 +152,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
