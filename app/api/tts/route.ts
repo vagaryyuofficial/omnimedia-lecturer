@@ -1,4 +1,4 @@
-import type { LanguageCode } from "../../../lib/academy-data";
+import { ALL_LANGUAGE_CODES, type LanguageCode } from "../../../lib/academy-data";
 
 type UserProvider = "gemini" | "qwen" | "fish" | "openai";
 type ProviderResult = {
@@ -8,7 +8,7 @@ type ProviderResult = {
   rawPcm?: boolean;
 };
 
-const LANGUAGES = new Set<LanguageCode>(["CN", "EN", "FR", "DE"]);
+const LANGUAGES = new Set<LanguageCode>(ALL_LANGUAGE_CODES);
 const USER_PROVIDERS = new Set<UserProvider>(["gemini", "qwen", "fish", "openai"]);
 const HEADER = {
   provider: "x-tts-provider",
@@ -23,25 +23,33 @@ const RECITATION_PREFIX: Record<LanguageCode, string> = {
   EN: "Read only the following text aloud. Do not read this instruction:",
   FR: "Lisez uniquement le texte suivant. Ne lisez pas cette consigne :",
   DE: "Lesen Sie nur den folgenden Text vor. Lesen Sie diese Anweisung nicht vor:",
+  IT: "Leggi ad alta voce soltanto il testo seguente. Non leggere questa istruzione:",
+  ES: "Lee en voz alta únicamente el texto siguiente. No leas esta instrucción:",
+  KO: "다음 텍스트만 소리 내어 읽고 이 지시문은 읽지 마세요:",
+  JA: "次の本文だけを読み上げ、この指示は読まないでください：",
 };
-const QWEN_LANGUAGE: Record<LanguageCode, "Chinese" | "English" | "French" | "German"> = {
+const QWEN_LANGUAGE: Record<LanguageCode, "Chinese" | "English" | "French" | "German" | "Italian" | "Spanish" | "Korean" | "Japanese"> = {
   CN: "Chinese",
   EN: "English",
   FR: "French",
   DE: "German",
+  IT: "Italian",
+  ES: "Spanish",
+  KO: "Korean",
+  JA: "Japanese",
 };
 
 const VOICE_PROFILES: Record<LanguageCode, {
   role: string;
   openaiVoice: "marin" | "cedar" | "coral" | "sage";
   compatibilityVoice: "nova" | "onyx" | "shimmer" | "fable";
-  geminiVoice: "Kore" | "Puck" | "Charon" | "Fenrir";
+  geminiVoice: "Kore" | "Puck" | "Charon" | "Fenrir" | "Aoede";
   qwenVoice: "Serena" | "Jennifer" | "Emilien" | "Lenn";
   instructions: string;
 }> = {
   CN: {
     role: "中文讲师", openaiVoice: "marin", compatibilityVoice: "nova", geminiVoice: "Kore", qwenVoice: "Serena",
-    instructions: "使用自然、温暖而克制的普通话授课。语速中等，句间有真实呼吸与思考停顿。不要播音腔，不要夸张。遇到英语、法语或德语词时，按对应语言自然发音。",
+    instructions: "使用自然、温暖而克制的普通话授课。语速中等，句间有真实呼吸与思考停顿。不要播音腔，不要夸张。遇到英语、法语、德语、意大利语、西班牙语、韩语或日语词时，按对应语言自然发音。",
   },
   EN: {
     role: "English Lecturer", openaiVoice: "cedar", compatibilityVoice: "onyx", geminiVoice: "Puck", qwenVoice: "Jennifer",
@@ -54,6 +62,22 @@ const VOICE_PROFILES: Record<LanguageCode, {
   DE: {
     role: "Dozent", openaiVoice: "sage", compatibilityVoice: "fable", geminiVoice: "Fenrir", qwenVoice: "Lenn",
     instructions: "Sprechen Sie natürlich, ruhig und präzise wie in einem Universitätsseminar. Verwenden Sie ein gemäßigtes Tempo, sinnvolle Pausen und keine künstliche Ansagerstimme.",
+  },
+  IT: {
+    role: "Docente", openaiVoice: "coral", compatibilityVoice: "shimmer", geminiVoice: "Aoede", qwenVoice: "Serena",
+    instructions: "Parla in un italiano naturale, colto e conversazionale, come in un seminario universitario. Mantieni un ritmo misurato, pause umane e un'intonazione precisa, senza voce da annunciatore.",
+  },
+  ES: {
+    role: "Profesora", openaiVoice: "coral", compatibilityVoice: "shimmer", geminiVoice: "Aoede", qwenVoice: "Serena",
+    instructions: "Habla en un español natural, culto y conversacional, como en un seminario universitario. Mantén un ritmo mesurado, pausas humanas y una entonación precisa, sin voz de locutor.",
+  },
+  KO: {
+    role: "한국어 강사", openaiVoice: "marin", compatibilityVoice: "nova", geminiVoice: "Kore", qwenVoice: "Serena",
+    instructions: "대학교 세미나처럼 자연스럽고 차분하며 정확한 한국어로 말하세요. 적당한 속도와 사람다운 쉼을 유지하고, 과장된 방송 말투는 피하세요.",
+  },
+  JA: {
+    role: "日本語講師", openaiVoice: "cedar", compatibilityVoice: "fable", geminiVoice: "Aoede", qwenVoice: "Serena",
+    instructions: "大学のゼミのように、自然で落ち着いた正確な日本語で話してください。適度な速さと人間らしい間を保ち、誇張したアナウンス調は避けてください。",
   },
 };
 
@@ -108,7 +132,7 @@ async function requestGeminiSpeech(apiKey: string, text: string, language: Langu
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
-      "x-goog-api-client": "deep-voice-expert/0.2.0",
+      "x-goog-api-client": "deep-language-expert/0.2.0",
     },
     body: JSON.stringify({
       contents: [{ parts: [{ text: `${profile.instructions}\n\n${RECITATION_PREFIX[language]}\n${text}` }] }],
@@ -127,7 +151,7 @@ async function requestGeminiSpeech(apiKey: string, text: string, language: Langu
   try { bytes = decodeBase64(inlineData.data); } catch { return { response: providerError("gemini", 502), voice: profile.geminiVoice }; }
   const sampleRate = Number(inlineData.mimeType?.match(/rate=(\d+)/i)?.[1]) || 24_000;
   return {
-    response: new Response(bytes, { headers: { "Content-Type": "audio/pcm" } }),
+    response: new Response(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, { headers: { "Content-Type": "audio/pcm" } }),
     voice: profile.geminiVoice,
     sampleRate,
     rawPcm: true,
@@ -269,7 +293,7 @@ export async function POST(request: Request) {
     } else {
       result = await requestOpenAiSpeech(process.env.OPENAI_API_KEY!, text, language, process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts");
     }
-    engine = userProvider || serverMode;
+    engine = userProvider || (serverMode === "external" ? "external" : "openai");
   } catch {
     return Response.json({ error: "PROVIDER_NETWORK_FAILED", message: "无法连接语音服务，请检查网络、地区与服务状态。" }, { status: 502 });
   }

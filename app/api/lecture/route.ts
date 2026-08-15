@@ -1,6 +1,7 @@
 import {
   buildSystemInstruction,
   buildUserPrompt,
+  type InterfaceLanguage,
   type SubjectId,
   type TeachingMode,
 } from "../../../lib/prompts";
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
     subject?: SubjectId;
     mode?: TeachingMode;
     query?: string;
+    interfaceLanguage?: InterfaceLanguage;
   };
 
   try {
@@ -56,6 +58,7 @@ export async function POST(request: Request) {
   }
 
   const { subject, mode, query } = payload;
+  const interfaceLanguage = payload.interfaceLanguage === "en" ? "en" : "zh";
   if (!subject || !SUBJECTS.has(subject) || !mode || !MODES.has(mode)) {
     return Response.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
@@ -76,14 +79,15 @@ export async function POST(request: Request) {
       subject,
       mode,
       query: query?.trim() || null,
-      systemInstruction: buildSystemInstruction(subject),
-      prompt: buildUserPrompt(subject, mode, query),
+      interfaceLanguage,
+      systemInstruction: buildSystemInstruction(subject, interfaceLanguage),
+      prompt: buildUserPrompt(subject, mode, query, interfaceLanguage),
       requestedCapabilities: [
         "web-search",
         "source-citations",
         "visual-grounding",
         "multilingual-terminology",
-        "clil-dsl-v1",
+        "clil-dsl-v2",
       ],
     }),
   });

@@ -10,6 +10,7 @@ export type OfflineVoicePack = {
   licenseUrl: string;
   sourceUrl: string;
   description: string;
+  descriptionEn: string;
 };
 
 export type OfflineVoiceState = {
@@ -46,6 +47,7 @@ export const OFFLINE_VOICE_PACKS: OfflineVoicePack[] = [
     licenseUrl: "https://huggingface.co/BricksDisplay/vits-cmn",
     sourceUrl: "https://huggingface.co/BricksDisplay/vits-cmn",
     description: "中文专用 VITS 声线；文字先在本地转换为带声调拼音，再由 ONNX 模型合成。",
+    descriptionEn: "A Mandarin VITS voice; text is converted locally to tone-marked pinyin before ONNX synthesis.",
   },
   {
     language: "EN",
@@ -57,6 +59,7 @@ export const OFFLINE_VOICE_PACKS: OfflineVoicePack[] = [
     licenseUrl: "https://huggingface.co/facebook/mms-tts-eng#license",
     sourceUrl: "https://huggingface.co/Xenova/mms-tts-eng",
     description: "Meta MMS 英语模型的浏览器量化版，适合词条、例句和中等长度段落。",
+    descriptionEn: "A browser-quantized Meta MMS English model for entries, examples and medium-length passages.",
   },
   {
     language: "FR",
@@ -68,6 +71,7 @@ export const OFFLINE_VOICE_PACKS: OfflineVoicePack[] = [
     licenseUrl: "https://huggingface.co/facebook/mms-tts-fra",
     sourceUrl: "https://huggingface.co/Xenova/mms-tts-fra",
     description: "法语专用量化模型，离线保留重音、连诵与句末语调。",
+    descriptionEn: "A quantized French model designed to retain stress, liaison and sentence-final intonation offline.",
   },
   {
     language: "DE",
@@ -79,10 +83,49 @@ export const OFFLINE_VOICE_PACKS: OfflineVoicePack[] = [
     licenseUrl: "https://huggingface.co/facebook/mms-tts-deu",
     sourceUrl: "https://huggingface.co/Xenova/mms-tts-deu",
     description: "德语专用量化模型，适合复合词、哲学术语和学术例句。",
+    descriptionEn: "A quantized German model for compounds, philosophical terms and academic examples.",
+  },
+  {
+    language: "IT",
+    name: "Italiano · MMS VITS",
+    locale: "it-IT",
+    model: "Xenova/mms-tts-ita",
+    size: "约 38 MB",
+    license: "CC-BY-NC-4.0",
+    licenseUrl: "https://huggingface.co/facebook/mms-tts-ita",
+    sourceUrl: "https://huggingface.co/Xenova/mms-tts-ita",
+    description: "意大利语专用量化模型，适合词条、生活表达和学术例句。",
+    descriptionEn: "A quantized Italian model for entries, daily expressions and academic examples.",
+  },
+  {
+    language: "ES",
+    name: "Español · MMS VITS",
+    locale: "es-ES",
+    model: "Xenova/mms-tts-spa",
+    size: "约 38 MB",
+    license: "CC-BY-NC-4.0",
+    licenseUrl: "https://huggingface.co/facebook/mms-tts-spa",
+    sourceUrl: "https://huggingface.co/Xenova/mms-tts-spa",
+    description: "西班牙语专用量化模型，适合词条、生活表达和学术例句。",
+    descriptionEn: "A quantized Spanish model for entries, daily expressions and academic examples.",
+  },
+  {
+    language: "KO",
+    name: "한국어 · MMS VITS",
+    locale: "ko-KR",
+    model: "Xenova/mms-tts-kor",
+    size: "约 38 MB",
+    license: "CC-BY-NC-4.0",
+    licenseUrl: "https://huggingface.co/facebook/mms-tts-kor",
+    sourceUrl: "https://huggingface.co/Xenova/mms-tts-kor",
+    description: "韩语专用量化模型，适合词条、敬语表达和学术例句。",
+    descriptionEn: "A quantized Korean model for entries, honorific expressions and academic examples.",
   },
 ];
 
-const STORAGE_KEY = "deep-voice-offline-packs-v1";
+const STORAGE_KEY = "deep-language-offline-packs-v1";
+const LEGACY_STORAGE_KEY = "deep-voice-offline-packs-v1";
+const OFFLINE_VOICE_STATE_EVENT = "deep-language-offline-state";
 const CACHE_KEY = "transformers-cache";
 const pending = new Map<string, PendingRequest>();
 let worker: Worker | null = null;
@@ -95,9 +138,12 @@ function defaultState(): OfflineVoiceState {
 export function getOfflineVoiceState(): OfflineVoiceState {
   if (typeof window === "undefined") return defaultState();
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+      || window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw) as OfflineVoiceState;
+    window.localStorage.setItem(STORAGE_KEY, raw);
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
     return { enabled: Boolean(parsed.enabled), installed: parsed.installed || {} };
   } catch {
     return defaultState();
@@ -106,7 +152,7 @@ export function getOfflineVoiceState(): OfflineVoiceState {
 
 function writeState(state: OfflineVoiceState) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  window.dispatchEvent(new CustomEvent("deep-voice-offline-state", { detail: state }));
+  window.dispatchEvent(new CustomEvent(OFFLINE_VOICE_STATE_EVENT, { detail: state }));
   return state;
 }
 
@@ -118,7 +164,7 @@ export function setOfflineVoiceEnabled(enabled: boolean) {
 async function getWorker() {
   if (worker) return worker;
   workerPromise ||= import("./offline-tts.worker?worker").then(({ default: OfflineTtsWorker }) => {
-    const activeWorker = new OfflineTtsWorker({ name: "deep-voice-offline-tts" });
+    const activeWorker = new OfflineTtsWorker({ name: "deep-language-offline-tts" });
     activeWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const response = event.data;
       const request = pending.get(response.id);
@@ -172,6 +218,7 @@ export async function downloadOfflineVoicePack(
   if (!("Worker" in window) || !("caches" in window)) {
     throw new Error("当前浏览器不支持本地模型缓存，请使用最新版 Chrome、Edge、Safari 或 Firefox。");
   }
+  if (!offlineVoicePackFor(language)) throw new Error("该语言暂未提供可下载的离线语音包。");
   await sendRequest("prepare", language, undefined, onProgress);
   const state = getOfflineVoiceState();
   return writeState({
@@ -182,7 +229,7 @@ export async function downloadOfflineVoicePack(
 
 export async function synthesizeOfflineSpeech(text: string, language: LanguageCode) {
   const state = getOfflineVoiceState();
-  if (!state.enabled || !state.installed[language]) throw new Error("请先下载并启用对应语言的离线语音包。");
+  if (!offlineVoicePackFor(language) || !state.enabled || !state.installed[language]) throw new Error("请先下载并启用对应语言的离线语音包。");
   const input = language === "CN"
     ? (await import("pinyin-pro")).pinyin(text, { toneType: "num", type: "array", nonZh: "consecutive" }).join("")
     : text;
@@ -202,5 +249,5 @@ export async function clearOfflineVoicePacks() {
 }
 
 export function offlineVoicePackFor(language: LanguageCode) {
-  return OFFLINE_VOICE_PACKS.find((pack) => pack.language === language) || OFFLINE_VOICE_PACKS[0];
+  return OFFLINE_VOICE_PACKS.find((pack) => pack.language === language);
 }

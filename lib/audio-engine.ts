@@ -44,14 +44,26 @@ const VOICE_PROFILES: Record<LanguageCode, VoiceProfile> = {
   EN: { role: "English Lecturer", cloudVoice: "Cedar", geminiVoice: "Puck", qwenVoice: "Jennifer", openaiVoice: "cedar", locale: "en-US" },
   FR: { role: "Professeure", cloudVoice: "Coral", geminiVoice: "Charon", qwenVoice: "Emilien", openaiVoice: "coral", locale: "fr-FR" },
   DE: { role: "Dozent", cloudVoice: "Sage", geminiVoice: "Fenrir", qwenVoice: "Lenn", openaiVoice: "sage", locale: "de-DE" },
+  IT: { role: "Docente", cloudVoice: "Coral", geminiVoice: "Aoede", qwenVoice: "Serena", openaiVoice: "coral", locale: "it-IT" },
+  ES: { role: "Profesora", cloudVoice: "Coral", geminiVoice: "Aoede", qwenVoice: "Serena", openaiVoice: "coral", locale: "es-ES" },
+  KO: { role: "한국어 강사", cloudVoice: "Marin", geminiVoice: "Kore", qwenVoice: "Serena", openaiVoice: "marin", locale: "ko-KR" },
+  JA: { role: "日本語講師", cloudVoice: "Cedar", geminiVoice: "Aoede", qwenVoice: "Serena", openaiVoice: "cedar", locale: "ja-JP" },
 };
-const SPEECH_SESSION_KEY = "omnimedia-speech-connections-session-v2";
+const SPEECH_SESSION_KEY = "deep-language-expert-speech-connections-session-v2";
+const LEGACY_SPEECH_SESSION_KEYS = [
+  "deep-voice-expert-speech-connections-session-v2",
+  "omnimedia-speech-connections-session-v2",
+];
 const LEGACY_GEMINI_SESSION_KEY = "omnimedia-gemini-api-key-session-v1";
 const PREFERRED_DEVICE_VOICES: Record<LanguageCode, string[]> = {
   CN: ["Tingting", "Ting-Ting", "Meijia", "Sin-ji", "Xiaoxiao"],
   EN: ["Ava", "Samantha", "Serena", "Daniel", "Karen", "Moira"],
   FR: ["Audrey", "Amélie", "Aurelie", "Thomas", "Marie"],
   DE: ["Anna", "Petra", "Markus", "Yannick"],
+  IT: ["Alice", "Elsa", "Federica", "Luca", "Paola"],
+  ES: ["Mónica", "Monica", "Jorge", "Paulina", "Marisol", "Helena"],
+  KO: ["Yuna", "Narae", "Sora", "Suhyun"],
+  JA: ["Kyoko", "Otoya", "Hattori", "Haruka", "Nanami"],
 };
 const NOVELTY_VOICE = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Pipe Organ|Trinoids|Whisper|Zarvox/i;
 
@@ -127,9 +139,12 @@ function emptySpeechState(): SpeechSessionState {
 export function getSessionSpeechState(): SpeechSessionState {
   if (typeof window === "undefined") return emptySpeechState();
   try {
-    const raw = window.sessionStorage.getItem(SPEECH_SESSION_KEY);
+    const raw = window.sessionStorage.getItem(SPEECH_SESSION_KEY)
+      || LEGACY_SPEECH_SESSION_KEYS.map((key) => window.sessionStorage.getItem(key)).find(Boolean);
     if (raw) {
       const parsed = JSON.parse(raw) as SpeechSessionState;
+      window.sessionStorage.setItem(SPEECH_SESSION_KEY, raw);
+      LEGACY_SPEECH_SESSION_KEYS.forEach((key) => window.sessionStorage.removeItem(key));
       return { activeProvider: parsed.activeProvider || null, connections: parsed.connections || {} };
     }
     const legacyKey = window.sessionStorage.getItem(LEGACY_GEMINI_SESSION_KEY)?.trim();
@@ -248,6 +263,8 @@ async function loadAudio(text: string, language: LanguageCode, connection?: Spee
 function inferLatinLanguage(value: string): LanguageCode {
   if (/\b(?:Schuld|Schulden|Es|Ich|Über-Ich|Aufhebung|Dasein|Nichts|Schuldentragfähigkeit|verbindlich|Algorithmus|Tragödie|Nachahmung|Handlung)\b/i.test(value)) return "DE";
   if (/\b(?:terroir|dette|créance|enjeu|surmoi|tragédie|néant|soutenabilité|impressionnisme)\b/i.test(value)) return "FR";
+  if (/\b(?:debito|obbligazione|conto|vorrei|catarsi|tragedia|algoritmo|complessità|superamento|dialettico|luce|impressione)\b/i.test(value)) return "IT";
+  if (/\b(?:deuda|obligación|cuenta|quisiera|catarsis|tragedia|algoritmo|complejidad|superación|dialéctica|luz|impresión|sostenibilidad)\b/i.test(value)) return "ES";
   if (/[äöüß]/i.test(value)) return "DE";
   if (/[àâçéèêëîïôûùüÿœæ]/i.test(value)) return "FR";
   return "EN";
@@ -278,12 +295,18 @@ function speechChunks(text: string, baseLanguage: LanguageCode): SpeechChunk[] {
         if (piece) chunks.push({ text: piece, language: baseLanguage });
         continue;
       }
-      const parts = piece.split(/([A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß][A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß'’\- ]{1,80})/g);
+      const parts = piece.split(/([A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß][A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß'’\- ]{1,80}|[\uac00-\ud7af][\uac00-\ud7af\s]{1,80}|[\u3040-\u30ff\u31f0-\u31ff][\u3040-\u30ff\u31f0-\u31ff\u3400-\u9fff々〆ヵヶー・\s]{1,80})/g);
       for (const part of parts) {
         const value = part.trim();
         if (!value) continue;
-        const isLatin = /^[A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß]/.test(value);
-        chunks.push({ text: value, language: isLatin ? inferLatinLanguage(value) : "CN" });
+        const language = /^[A-Za-zÀ-ÖØ-öø-ÿŒœÆæÄÖÜäöüß]/.test(value)
+          ? inferLatinLanguage(value)
+          : /[\uac00-\ud7af]/.test(value)
+            ? "KO"
+            : /[\u3040-\u30ff\u31f0-\u31ff]/.test(value)
+              ? "JA"
+              : "CN";
+        chunks.push({ text: value, language });
       }
     }
   }
@@ -336,6 +359,10 @@ function utteranceSettings(language: LanguageCode) {
   if (language === "CN") return { rate: 0.92, pitch: 1 };
   if (language === "FR") return { rate: 0.9, pitch: 1.02 };
   if (language === "DE") return { rate: 0.88, pitch: 0.96 };
+  if (language === "IT") return { rate: 0.9, pitch: 1.01 };
+  if (language === "ES") return { rate: 0.9, pitch: 1.01 };
+  if (language === "KO") return { rate: 0.9, pitch: 1 };
+  if (language === "JA") return { rate: 0.9, pitch: 1 };
   return { rate: 0.91, pitch: 0.99 };
 }
 
@@ -404,7 +431,7 @@ async function loadOfflineAudio(text: string, language: LanguageCode) {
   const result = {
     buffer,
     engine: "offline",
-    voice: offlineVoicePackFor(language).name,
+    voice: offlineVoicePackFor(language)?.name || VOICE_PROFILES[language].role,
     sampleRate,
   };
   cache.set(key, result);

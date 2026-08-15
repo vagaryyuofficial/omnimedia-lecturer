@@ -15,19 +15,19 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: origin,
-    title: "深度语音专家 · Deep Voice Expert",
+    title: "深度语言专家 · Deep Language Expert",
     description:
-      "以中文深度理解概念，用英、法、德术语、词源、维基知识图谱与多语语音建立可追溯的学习网络。",
+      "面向中文与英文母语者，以中英双语理解概念，并学习法语、德语、意大利语、西班牙语、韩语与日语。 For Chinese- and English-speaking learners studying French, German, Italian, Spanish, Korean and Japanese.",
     openGraph: {
-      title: "深度语音专家 · Deep Voice Expert",
-      description: "像词典一样精确，像语言教练一样会讲：多语概念、语音与知识链接学习工具。",
+      title: "深度语言专家 · Deep Language Expert",
+      description: "中英双语界面，以母语理解为基础学习六种目标语言。 Bilingual concept learning across six target languages.",
       images: [new URL("/og.png", origin).toString()],
     },
     twitter: {
       card: "summary_large_image",
-      title: "深度语音专家",
+      title: "深度语言专家 · Deep Language Expert",
       description:
-        "A multilingual voice lexicon for deep concept learning in Chinese, English, French and German.",
+        "A bilingual Chinese-English voice lexicon for learning French, German, Italian, Spanish, Korean and Japanese through knowledge.",
       images: [new URL("/og.png", origin).toString()],
     },
   };

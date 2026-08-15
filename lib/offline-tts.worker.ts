@@ -12,11 +12,14 @@ type SpeechOutput = {
   sampling_rate: number;
 };
 
-const MODEL_IDS: Record<LanguageCode, string> = {
+const MODEL_IDS: Partial<Record<LanguageCode, string>> = {
   CN: "BricksDisplay/vits-cmn",
   EN: "Xenova/mms-tts-eng",
   FR: "Xenova/mms-tts-fra",
   DE: "Xenova/mms-tts-deu",
+  IT: "Xenova/mms-tts-ita",
+  ES: "Xenova/mms-tts-spa",
+  KO: "Xenova/mms-tts-kor",
 };
 
 const synthesizers = new Map<LanguageCode, Promise<CallableFunction>>();
@@ -36,14 +39,17 @@ async function transformers() {
 }
 
 function post(id: string, payload: Record<string, unknown>, transfer?: Transferable[]) {
-  self.postMessage({ id, ...payload }, transfer || []);
+  (self as unknown as { postMessage(message: unknown, transfer: Transferable[]): void })
+    .postMessage({ id, ...payload }, transfer || []);
 }
 
 async function synthesizerFor(language: LanguageCode, requestId: string) {
   const existing = synthesizers.get(language);
   if (existing) return existing;
+  const modelId = MODEL_IDS[language];
+  if (!modelId) throw new Error("该语言暂未提供可下载的离线语音包。");
   const { pipeline } = await transformers();
-  const created = pipeline("text-to-speech", MODEL_IDS[language], {
+  const created = pipeline("text-to-speech", modelId, {
     dtype: "q8",
     progress_callback: (progress: { status?: string; progress?: number; loaded?: number; total?: number; file?: string }) => {
       if (progress.status === "progress" || progress.status === "progress_total") {

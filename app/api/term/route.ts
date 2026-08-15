@@ -1,7 +1,7 @@
-import type { LanguageCode } from "../../../lib/academy-data";
+import { ALL_LANGUAGE_CODES, type LanguageCode } from "../../../lib/academy-data";
 import type { SubjectId } from "../../../lib/prompts";
 
-const LANGUAGES = new Set<LanguageCode>(["CN", "EN", "FR", "DE"]);
+const LANGUAGES = new Set<LanguageCode>(ALL_LANGUAGE_CODES);
 const SUBJECTS = new Set<SubjectId>([
   "literature",
   "economics",
@@ -31,6 +31,7 @@ export async function POST(request: Request) {
     term?: string;
     language?: LanguageCode;
     subject?: SubjectId;
+    interfaceLanguage?: "zh" | "en";
   };
   try {
     payload = await request.json();
@@ -63,6 +64,10 @@ export async function POST(request: Request) {
       term: payload.term.trim(),
       language: payload.language,
       subject: payload.subject,
+      interfaceLanguage: payload.interfaceLanguage === "en" ? "en" : "zh",
+      instruction: payload.interfaceLanguage === "en"
+        ? "Write definition, etymology, grammar and nuance in English; provide the example in the target language and a Chinese translation."
+        : "用中文写定义、词源、语法和语义微析；例句使用目标语言，并提供中文翻译。",
       responseSchema: {
         definition: "string",
         etymology: "string",
