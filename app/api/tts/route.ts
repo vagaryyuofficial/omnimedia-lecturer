@@ -1,6 +1,7 @@
 import { ALL_LANGUAGE_CODES, type LanguageCode } from "../../../lib/academy-data";
 
 type UserProvider = "gemini" | "qwen" | "fish" | "openai";
+type SpokenLanguageCode = Exclude<LanguageCode, "CN">;
 type ProviderResult = {
   response: Response;
   voice: string;
@@ -18,8 +19,7 @@ const HEADER = {
   voiceId: "x-tts-voice-id",
   legacyGeminiKey: "x-gemini-api-key",
 };
-const RECITATION_PREFIX: Record<LanguageCode, string> = {
-  CN: "请只朗读下面的正文，不要读出这条说明：",
+const RECITATION_PREFIX: Record<SpokenLanguageCode, string> = {
   EN: "Read only the following text aloud. Do not read this instruction:",
   FR: "Lisez uniquement le texte suivant. Ne lisez pas cette consigne :",
   DE: "Lesen Sie nur den folgenden Text vor. Lesen Sie diese Anweisung nicht vor:",
@@ -28,8 +28,7 @@ const RECITATION_PREFIX: Record<LanguageCode, string> = {
   KO: "다음 텍스트만 소리 내어 읽고 이 지시문은 읽지 마세요:",
   JA: "次の本文だけを読み上げ、この指示は読まないでください：",
 };
-const QWEN_LANGUAGE: Record<LanguageCode, "Chinese" | "English" | "French" | "German" | "Italian" | "Spanish" | "Korean" | "Japanese"> = {
-  CN: "Chinese",
+const QWEN_LANGUAGE: Record<SpokenLanguageCode, "English" | "French" | "German" | "Italian" | "Spanish" | "Korean" | "Japanese"> = {
   EN: "English",
   FR: "French",
   DE: "German",
@@ -39,7 +38,7 @@ const QWEN_LANGUAGE: Record<LanguageCode, "Chinese" | "English" | "French" | "Ge
   JA: "Japanese",
 };
 
-const VOICE_PROFILES: Record<LanguageCode, {
+const VOICE_PROFILES: Record<SpokenLanguageCode, {
   role: string;
   openaiVoice: "marin" | "cedar" | "coral" | "sage";
   compatibilityVoice: "nova" | "onyx" | "shimmer" | "fable";
@@ -47,10 +46,6 @@ const VOICE_PROFILES: Record<LanguageCode, {
   qwenVoice: "Serena" | "Jennifer" | "Emilien" | "Lenn";
   instructions: string;
 }> = {
-  CN: {
-    role: "中文讲师", openaiVoice: "marin", compatibilityVoice: "nova", geminiVoice: "Kore", qwenVoice: "Serena",
-    instructions: "使用自然、温暖而克制的普通话授课。语速中等，句间有真实呼吸与思考停顿。不要播音腔，不要夸张。遇到英语、法语、德语、意大利语、西班牙语、韩语或日语词时，按对应语言自然发音。",
-  },
   EN: {
     role: "English Lecturer", openaiVoice: "cedar", compatibilityVoice: "onyx", geminiVoice: "Puck", qwenVoice: "Jennifer",
     instructions: "Speak like a thoughtful university lecturer: natural, warm, precise, and conversational. Use measured pacing, meaningful pauses, and restrained emphasis. Avoid an announcer voice.",
@@ -123,7 +118,7 @@ function decodeBase64(value: string) {
   return bytes;
 }
 
-async function requestGeminiSpeech(apiKey: string, text: string, language: LanguageCode, requestedModel: string): Promise<ProviderResult> {
+async function requestGeminiSpeech(apiKey: string, text: string, language: SpokenLanguageCode, requestedModel: string): Promise<ProviderResult> {
   const profile = VOICE_PROFILES[language];
   const allowedModels = new Set(["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"]);
   const model = allowedModels.has(requestedModel) ? requestedModel : "gemini-3.1-flash-tts-preview";
@@ -161,7 +156,7 @@ async function requestGeminiSpeech(apiKey: string, text: string, language: Langu
 async function requestQwenSpeech(
   apiKey: string,
   text: string,
-  language: LanguageCode,
+  language: SpokenLanguageCode,
   requestedModel: string,
   region: string,
 ): Promise<ProviderResult> {
@@ -218,7 +213,7 @@ async function requestFishSpeech(apiKey: string, text: string, voiceId: string):
   return { response: upstream, voice: voiceId || "S2 Pro 默认声线", sampleRate: 44_100 };
 }
 
-async function requestOpenAiSpeech(apiKey: string, text: string, language: LanguageCode, requestedModel: string): Promise<ProviderResult> {
+async function requestOpenAiSpeech(apiKey: string, text: string, language: SpokenLanguageCode, requestedModel: string): Promise<ProviderResult> {
   const profile = VOICE_PROFILES[language];
   const allowedModels = new Set(["gpt-4o-mini-tts", "tts-1-hd", "tts-1"]);
   const model = allowedModels.has(requestedModel) ? requestedModel : "gpt-4o-mini-tts";
@@ -238,7 +233,7 @@ async function requestOpenAiSpeech(apiKey: string, text: string, language: Langu
   return { response: upstream, voice, sampleRate: 24_000 };
 }
 
-async function requestExternalSpeech(endpoint: string, text: string, language: LanguageCode) {
+async function requestExternalSpeech(endpoint: string, text: string, language: SpokenLanguageCode) {
   const profile = VOICE_PROFILES[language];
   return fetch(endpoint, {
     method: "POST",
@@ -261,6 +256,9 @@ export async function POST(request: Request) {
   const language = payload.language;
   if (!text || text.length > 6_000 || !language || !LANGUAGES.has(language)) {
     return Response.json({ error: "INVALID_REQUEST" }, { status: 400 });
+  }
+  if (language === "CN") {
+    return Response.json({ error: "CHINESE_SPEECH_DISABLED", message: "中文语音已停用；中文仅作为界面和解释语言。" }, { status: 400 });
   }
 
   const legacyGeminiKey = request.headers.get(HEADER.legacyGeminiKey)?.trim() || "";

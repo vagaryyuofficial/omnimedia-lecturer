@@ -1,0 +1,14 @@
+{
+  "name": "deep-language-expert-desktop",
+  "version": "0.3.0",
+  "description": "Local desktop runtime for Deep Language Expert.",
+  "productName": "Deep Language Expert",
+  "main": "main.mjs",
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "license": "MIT",
+  "author": "Deep Language Expert contributors",
+  "homepage": "https://github.com/vagaryyuofficial/omnimedia-lecturer",
+  "repository": "https://github.com/vagaryyuofficial/omnimedia-lecturer.git",
+  "private": true
+}

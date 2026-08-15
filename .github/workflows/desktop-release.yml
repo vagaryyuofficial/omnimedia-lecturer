@@ -1,0 +1,145 @@
+name: Desktop release / 桌面版发布
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate source / 验证源码
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          ROOT_VERSION="$(node -p "require('./package.json').version")"
+          DESKTOP_VERSION="$(node -p "require('./desktop/package.json').version")"
+          test "$ROOT_VERSION" = "$DESKTOP_VERSION"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            test "v$ROOT_VERSION" = "$GITHUB_REF_NAME"
+          fi
+
+      - name: Lint and test
+        run: |
+          pnpm lint
+          pnpm test
+
+  package:
+    name: ${{ matrix.label }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon (M-series)
+            os: macos-15
+            arguments: --mac dmg zip --arm64
+            artifact: macos-arm64
+          - label: macOS Intel
+            os: macos-15-intel
+            arguments: --mac dmg zip --x64
+            artifact: macos-x64
+          - label: Windows x64
+            os: windows-2025
+            arguments: --win nsis portable --x64
+            artifact: windows-x64
+          - label: Linux x64
+            os: ubuntu-24.04
+            arguments: --linux AppImage deb --x64
+            artifact: linux-x64
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
+            arguments: --linux AppImage deb --arm64
+            artifact: linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production application
+        run: |
+          pnpm build
+          pnpm desktop:icon
+
+      - name: Package desktop application
+        run: pnpm exec electron-builder ${{ matrix.arguments }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-language-expert-${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/*
+            !release/*-unpacked/**
+            !release/mac*/**
+            !release/*.blockmap
+            !release/builder-*.yml
+            !release/latest*.yml
+
+  release:
+    name: Publish GitHub Release / 发布 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: deep-language-expert-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create SHA-256 checksums
+        working-directory: release-assets
+        run: find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* --title "深度语言专家 · Deep Language Expert $TAG" --generate-notes
+          fi

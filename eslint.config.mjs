@@ -11,8 +11,10 @@ const eslintConfig = defineConfig([
   globalIgnores([
     ".next/**",
     "dist/**",
+    "release/**",
     "out/**",
     "build/**",
+    "public/vendor/**",
     "next-env.d.ts",
   ]),
   eslint.configs.recommended,

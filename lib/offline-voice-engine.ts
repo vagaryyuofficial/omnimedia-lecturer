@@ -38,18 +38,6 @@ type PendingRequest = {
 
 export const OFFLINE_VOICE_PACKS: OfflineVoicePack[] = [
   {
-    language: "CN",
-    name: "普通话 · Bricks VITS",
-    locale: "zh-CN",
-    model: "BricksDisplay/vits-cmn",
-    size: "约 37 MB",
-    license: "Apache-2.0",
-    licenseUrl: "https://huggingface.co/BricksDisplay/vits-cmn",
-    sourceUrl: "https://huggingface.co/BricksDisplay/vits-cmn",
-    description: "中文专用 VITS 声线；文字先在本地转换为带声调拼音，再由 ONNX 模型合成。",
-    descriptionEn: "A Mandarin VITS voice; text is converted locally to tone-marked pinyin before ONNX synthesis.",
-  },
-  {
     language: "EN",
     name: "English · MMS VITS",
     locale: "en-US",
@@ -142,9 +130,23 @@ export function getOfflineVoiceState(): OfflineVoiceState {
       || window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw) as OfflineVoiceState;
-    window.localStorage.setItem(STORAGE_KEY, raw);
+    const installed = Object.fromEntries(
+      OFFLINE_VOICE_PACKS
+        .filter((pack) => parsed.installed?.[pack.language])
+        .map((pack) => [pack.language, true]),
+    ) as OfflineVoiceState["installed"];
+    const sanitized = { enabled: Boolean(parsed.enabled) && Object.keys(installed).length > 0, installed };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
-    return { enabled: Boolean(parsed.enabled), installed: parsed.installed || {} };
+    if (parsed.installed?.CN && "caches" in window) {
+      void window.caches.open(CACHE_KEY).then(async (cache) => {
+        const requests = await cache.keys();
+        await Promise.all(requests
+          .filter((request) => /BricksDisplay|vits-cmn/i.test(request.url))
+          .map((request) => cache.delete(request)));
+      }).catch(() => undefined);
+    }
+    return sanitized;
   } catch {
     return defaultState();
   }
@@ -163,8 +165,11 @@ export function setOfflineVoiceEnabled(enabled: boolean) {
 
 async function getWorker() {
   if (worker) return worker;
-  workerPromise ||= import("./offline-tts.worker?worker").then(({ default: OfflineTtsWorker }) => {
-    const activeWorker = new OfflineTtsWorker({ name: "deep-language-offline-tts" });
+  workerPromise ||= Promise.resolve().then(() => {
+    const activeWorker = new Worker("/offline-tts.worker.js", {
+      name: "deep-language-offline-tts",
+      type: "module",
+    });
     activeWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const response = event.data;
       const request = pending.get(response.id);
@@ -227,13 +232,10 @@ export async function downloadOfflineVoicePack(
   });
 }
 
-export async function synthesizeOfflineSpeech(text: string, language: LanguageCode) {
+export async function synthesizeOfflineSpeech(text: string, language: LanguageCode, allowDisabled = false) {
   const state = getOfflineVoiceState();
-  if (!offlineVoicePackFor(language) || !state.enabled || !state.installed[language]) throw new Error("请先下载并启用对应语言的离线语音包。");
-  const input = language === "CN"
-    ? (await import("pinyin-pro")).pinyin(text, { toneType: "num", type: "array", nonZh: "consecutive" }).join("")
-    : text;
-  const output = await sendRequest("synthesize", language, input);
+  if (!offlineVoicePackFor(language) || !state.installed[language] || (!state.enabled && !allowDisabled)) throw new Error("请先下载并启用对应语言的离线语音包。");
+  const output = await sendRequest("synthesize", language, text);
   if (!output.audio || !output.sampleRate) throw new Error("离线语音包没有返回有效音频。");
   return { audio: output.audio, sampleRate: output.sampleRate };
 }
