@@ -20,12 +20,13 @@ const MODEL_IDS: Record<LanguageCode, string> = {
 };
 
 const synthesizers = new Map<LanguageCode, Promise<CallableFunction>>();
-const workerGlobal = globalThis as typeof globalThis & { window?: typeof globalThis };
-workerGlobal.window ||= workerGlobal;
+const TRANSFORMERS_RUNTIME_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js";
 let transformersPromise: Promise<typeof import("@huggingface/transformers")> | null = null;
 
 async function transformers() {
-  transformersPromise ||= import("@huggingface/transformers").then((module) => {
+  // Keep the ONNX runtime out of the server/Worker bundle. The browser downloads
+  // this immutable ESM build together with the first voice pack and caches both.
+  transformersPromise ||= import(/* @vite-ignore */ TRANSFORMERS_RUNTIME_URL).then((module) => {
     module.env.useBrowserCache = true;
     module.env.allowRemoteModels = true;
     module.env.cacheKey = "transformers-cache";
