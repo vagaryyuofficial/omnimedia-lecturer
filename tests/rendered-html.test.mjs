@@ -13,14 +13,16 @@ async function render(path = "/", init) {
   );
 }
 
-test("renders the Deep Voice Expert learning workspace", async () => {
+test("renders the Deep Language Expert learning workspace", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<html[^>]+lang="zh-CN"/i);
-  assert.match(html, /<title>深度语音专家 · Deep Voice Expert<\/title>/i);
+  assert.match(html, /<title>深度语言专家 · Deep Language Expert<\/title>/i);
+  assert.match(html, /深度语言专家/);
+  assert.match(html, /DEEP LANGUAGE EXPERT/);
   assert.match(html, /文学名著/);
   assert.match(html, /经济学/);
   assert.match(html, /心理学/);
@@ -33,11 +35,23 @@ test("renders the Deep Voice Expert learning workspace", async () => {
   assert.match(html, /概念定义/);
   assert.match(html, /案例分析/);
   assert.match(html, /学术精读/);
+  assert.match(html, /界面语言/);
   assert.match(html, /真实多语声线/);
   assert.match(html, />离线包</);
+  assert.match(html, /Italiano/);
+  assert.match(html, /Español/);
+  assert.match(html, /한국어/);
+  assert.match(html, /日本語/);
+  assert.match(html, /CN \/ EN → FR \/ DE \/ IT \/ ES \/ KO \/ JA/);
   assert.match(html, /https:\/\/zh\.wikipedia\.org\/wiki\/Special:Search\?search=/);
   assert.match(html, /https:\/\/en\.wikipedia\.org\/wiki\/Special:Search\?search=/);
+  assert.match(html, /https:\/\/it\.wikipedia\.org\/wiki\/Special:Search\?search=/);
+  assert.match(html, /https:\/\/es\.wikipedia\.org\/wiki\/Special:Search\?search=/);
+  assert.match(html, /https:\/\/ko\.wikipedia\.org\/wiki\/Special:Search\?search=/);
+  assert.match(html, /https:\/\/ja\.wikipedia\.org\/wiki\/Special:Search\?search=/);
   assert.match(html, /在维基百科检索/);
+  assert.doesNotMatch(html, /class="ask-mark">✦/);
+  assert.doesNotMatch(html, /深度语音专家|DEEP VOICE EXPERT/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });
 
@@ -128,7 +142,7 @@ test("returns a useful error when the user's Gemini quota is exhausted", async (
   }
 });
 
-test("routes Qwen3 TTS through the selected region and returns the signed audio", async () => {
+test("routes Japanese Qwen3 TTS through the selected region and returns the signed audio", async () => {
   const originalFetch = globalThis.fetch;
   const apiKey = "sk-qwen-user-owned-test-key-1234567890";
   const audio = Buffer.from("qwen-audio-test");
@@ -152,19 +166,19 @@ test("routes Qwen3 TTS through the selected region and returns the signed audio"
         "X-TTS-Model": "qwen3-tts-instruct-flash",
         "X-TTS-Region": "china",
       },
-      body: JSON.stringify({ text: "La langue éclaire le savoir.", language: "FR" }),
+      body: JSON.stringify({ text: "言葉は知識を生きたものにします。", language: "JA" }),
     });
 
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-tts-engine"), "qwen");
-    assert.equal(response.headers.get("x-tts-voice"), "Emilien");
+    assert.equal(response.headers.get("x-tts-voice"), "Serena");
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), audio);
     assert.match(observed[0].input, /^https:\/\/dashscope\.aliyuncs\.com\//);
     assert.equal(observed[0].init.headers.Authorization, `Bearer ${apiKey}`);
     const body = JSON.parse(observed[0].init.body);
     assert.equal(body.model, "qwen3-tts-instruct-flash");
-    assert.equal(body.input.language_type, "French");
-    assert.equal(body.input.voice, "Emilien");
+    assert.equal(body.input.language_type, "Japanese");
+    assert.equal(body.input.voice, "Serena");
     assert.doesNotMatch(JSON.stringify([...response.headers]), new RegExp(apiKey));
   } finally {
     globalThis.fetch = originalFetch;

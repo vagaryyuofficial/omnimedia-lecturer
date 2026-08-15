@@ -398,6 +398,36 @@ button { color: inherit; }
   gap: 7px;
 }
 
+.locale-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 3px;
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 10px;
+  background: rgb(233 231 230 / 72%);
+}
+
+.topbar-tools .locale-switch button {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  color: #858184;
+  background: transparent;
+  box-shadow: none;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 7px;
+}
+
+.topbar-tools .locale-switch button.active {
+  color: var(--accent);
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 9%);
+}
+
 .topbar-tools button {
   height: 34px;
   padding: 0 11px;
@@ -593,6 +623,10 @@ button { color: inherit; }
 .term-pill.lang-en { --term-color: #4773a8; }
 .term-pill.lang-fr { --term-color: #585b9b; }
 .term-pill.lang-de { --term-color: #a77728; }
+.term-pill.lang-it { --term-color: #4f8066; }
+.term-pill.lang-es { --term-color: #b45d52; }
+.term-pill.lang-ko { --term-color: #4f6f9b; }
+.term-pill.lang-ja { --term-color: #9d4f59; }
 .term-pill.lang-cn { --term-color: var(--accent); }
 
 .term-pill > button {

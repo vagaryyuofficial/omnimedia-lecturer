@@ -20,7 +20,7 @@ export type DslBlock =
       entries: LanguageCardEntry[];
     };
 
-const INLINE_TERM = /\{\{([^|{}]+)\|(CN|EN|FR|DE)\}\}/g;
+const INLINE_TERM = /\{\{([^|{}]+)\|(CN|EN|FR|DE|IT|ES|KO|JA)\}\}/g;
 
 export function tokenizeInline(value: string): InlineToken[] {
   const tokens: InlineToken[] = [];
@@ -46,7 +46,7 @@ export function tokenizeInline(value: string): InlineToken[] {
 }
 
 function parseLanguageCard(line: string): DslBlock | null {
-  const match = line.match(/^\[\[(EN|FR|DE):\s*([^|]+?)\s*\|\|\s*(.+)\]\]$/);
+  const match = line.match(/^\[\[(EN|FR|DE|IT|ES|KO|JA):\s*([^|]+?)\s*\|\|\s*(.+)\]\]$/);
   if (!match) return null;
 
   const entries = match[3]
@@ -83,4 +83,3 @@ export function parseLectureDsl(input: string): DslBlock[] {
       return { type: "paragraph", tokens: tokenizeInline(line) };
     });
 }
-
