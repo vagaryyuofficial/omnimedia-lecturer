@@ -407,14 +407,14 @@ async function speakOnDevice(text: string, language: LanguageCode, key: string, 
   return { engine: "device", voice: primaryVoice?.name || `系统默认 ${VOICE_PROFILES[language].locale}`, label: "设备增强声线" };
 }
 
-async function loadOfflineAudio(text: string, language: LanguageCode) {
+async function loadOfflineAudio(text: string, language: LanguageCode, allowDisabled = false) {
   const key = `offline:${language}:${text}`;
   const cached = cache.get(key);
   if (cached) return cached;
   const chunks = speechChunks(text, language);
   const rendered: Array<{ audio: Float32Array; sampleRate: number }> = [];
   for (const chunk of chunks) {
-    rendered.push(await synthesizeOfflineSpeech(chunk.text, chunk.language));
+    rendered.push(await synthesizeOfflineSpeech(chunk.text, chunk.language, allowDisabled));
   }
   const sampleRate = rendered[0]?.sampleRate || 16_000;
   const pauseSamples = Math.round(sampleRate * 0.055);
@@ -438,12 +438,47 @@ async function loadOfflineAudio(text: string, language: LanguageCode) {
   return result;
 }
 
+export async function playOfflineSpeech(options: { text: string; language: LanguageCode; onEnd?: () => void }): Promise<PlaybackInfo> {
+  const spokenText = options.text.trim();
+  const state = getOfflineVoiceState();
+  if (!spokenText) return { engine: "stopped", voice: "", label: "已停止" };
+  if (!state.installed[options.language]) throw new Error("请先下载对应语言的离线语音包。");
+
+  const key = `offline-preview:${options.language}:${spokenText}`;
+  if (currentKey === key) {
+    stopCurrent();
+    options.onEnd?.();
+    return { engine: "stopped", voice: "", label: "已停止" };
+  }
+
+  stopCurrent();
+  currentKey = key;
+  const audioContext = getContext();
+  const audio = await loadOfflineAudio(spokenText, options.language, true);
+  if (currentKey !== key) return { engine: "stopped", voice: "", label: "已停止" };
+  await audioContext.resume().catch(() => undefined);
+  const source = audioContext.createBufferSource();
+  source.buffer = audio.buffer;
+  source.connect(audioContext.destination);
+  source.onended = () => {
+    if (currentKey === key) currentKey = null;
+    currentSource = null;
+    options.onEnd?.();
+  };
+  currentSource = source;
+  source.start();
+  return { engine: "offline", voice: audio.voice, label: "本地 ONNX 语音包", sampleRate: audio.sampleRate };
+}
+
 export async function playSpeech(options: { text: string; language: LanguageCode; onEnd?: () => void }): Promise<PlaybackInfo> {
   const spokenText = options.text.trim();
+  if (options.language === "CN") throw new Error("中文语音已停用；中文保留为解释与界面语言。");
   const session = getSessionSpeechState();
   const connection = session.activeProvider ? session.connections[session.activeProvider] : undefined;
   const offlineState = getOfflineVoiceState();
-  const offlineReady = !connection && offlineState.enabled && Boolean(offlineState.installed[options.language]);
+  const offlineReady = !connection
+    && offlineState.enabled
+    && Boolean(offlineState.installed[options.language]);
   const key = `${connection?.provider || (offlineReady ? "offline" : "device")}:${options.language}:${spokenText}`;
   if (!spokenText) return { engine: "stopped", voice: "", label: "已停止" };
   if (currentKey === key) {

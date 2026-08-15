@@ -25,6 +25,7 @@ import {
   clearSessionSpeechConnection,
   getAudioCapability,
   getSessionSpeechState,
+  playOfflineSpeech,
   playSpeech,
   setActiveSpeechProvider,
   setSessionSpeechConnection,
@@ -38,6 +39,16 @@ import {
   type SpeechSessionState,
 } from "../lib/audio-engine";
 import { parseLectureDsl, type InlineToken } from "../lib/dsl";
+import {
+  buildCourseModuleDsl,
+  courseModuleFor,
+  sourcesForCourseModule,
+} from "../lib/course-library";
+import { buildLocalCourseAnswer } from "../lib/local-answer-engine";
+import {
+  buildContextualTermReport,
+  isModuleTitleTerm,
+} from "../lib/term-report";
 import {
   clearOfflineVoicePacks,
   downloadOfflineVoicePack,
@@ -59,6 +70,16 @@ type Note = {
   body: string;
   subject: SubjectId;
   updatedAt: number;
+};
+type ConversationTurn = {
+  id: string;
+  subject: SubjectId;
+  moduleId: string;
+  question: string;
+  answerDsl: string;
+  sources: Source[];
+  origin: "local" | "external";
+  enhancing: boolean;
 };
 
 const QUICK_ACTIONS: Array<{
@@ -107,7 +128,7 @@ const SPEECH_PROVIDERS: Array<{
     maker: "Google AI",
     badge: "可试用",
     badgeEn: "Trial available",
-    description: "最接近 AI Studio 的表达型朗读，支持指令控制语气与八语朗读。",
+    description: "最接近 AI Studio 的表达型朗读，支持英、法、德、意、西、韩、日七种朗读语言与指令式语气控制。",
     descriptionEn: "Expressive speech close to the AI Studio experience, with instruction-led delivery and multilingual voices.",
     note: "免费额度与可用地区由 Google 决定。",
     noteEn: "Google determines free quotas and regional availability.",
@@ -126,7 +147,7 @@ const SPEECH_PROVIDERS: Array<{
     maker: "Alibaba Cloud",
     badge: "多语优先",
     badgeEn: "Multilingual",
-    description: "支持中、英、法、德、意、西、韩、日多语朗读，适合术语、整句与课程正文。",
+    description: "支持英、法、德、意、西、韩、日多语朗读，适合术语、整句与课程正文；中文语音已停用。",
     descriptionEn: "Stable multilingual speech for terms, complete sentences and lesson narration.",
     note: "百炼 Key 分中国站与国际站，必须选择 Key 所属地区。",
     noteEn: "Model Studio keys are region-specific; select the region where your key was created.",
@@ -192,6 +213,7 @@ const INTERFACE_LANGUAGE_KEY = "deep-language-interface-language";
 const LEGACY_INTERFACE_LANGUAGE_KEY = "deep-voice-interface-language";
 const TEXT_SIZE_KEY = "deep-language-text-size";
 const OFFLINE_VOICE_STATE_EVENT = "deep-language-offline-state";
+const CONVERSATION_STORAGE_KEY = "deep-language-conversations-v1";
 
 const TEXT_SIZE_OPTIONS: Array<{ id: TextSize; label: string; labelEn: string; mark: string }> = [
   { id: "standard", label: "标准文字", labelEn: "Standard text", mark: "A" },
@@ -223,33 +245,6 @@ const VOICE_SAMPLES: Record<LanguageCode, string> = {
 
 function wikipediaHref(term: string, language: LanguageCode) {
   return `https://${WIKIPEDIA_HOSTS[language]}/wiki/Special:Search?search=${encodeURIComponent(term.trim())}`;
-}
-
-function genericReport(term: ActiveTerm, subjectName: string, locale: UiLocale): TermReport {
-  if (locale === "en") {
-    return {
-      definition: `“${term.value}” is a key concept in the ${subjectName} course. This is the built-in summary; a connected terminology service can provide a deeper academic definition and theoretical context.`,
-      etymology: "A complete local etymology is not yet available. A live report can trace Greek, Latin or Germanic roots while separating reliable history from folk etymology.",
-      grammar: `${term.language} term. A live report can add part of speech, gender, inflection, case, collocations and common syntactic positions.`,
-      nuance: "Separate everyday usage from the technical meaning in this subject, then compare near-synonyms to define its semantic boundary.",
-      example: `${term.value} becomes precise only when its context is made explicit.`,
-      translation: `只有在语境被明确以后，“${term.value}”的含义才真正精确。`,
-    };
-  }
-  return {
-    definition: `“${term.value}”是「${subjectName}」课程中的关键概念。当前展示内置摘要；连接术语接口后可生成更细致的学术定义与理论背景。`,
-    etymology: "该词的完整词源报告尚未写入本地词库。实时术语接口会追溯希腊语、拉丁语或日耳曼语词根，并区分可靠词源与民间附会。",
-    grammar: `${term.language} 术语。实时报告可补充词性、阴阳性、变位、格位、固定搭配与常见句法位置。`,
-    nuance: "应把日常用法与当前学科中的技术含义分开，并通过近义词比较划定语义边界。",
-    example: `${term.value} becomes precise only when its context is made explicit.`,
-    translation: `只有在语境被明确以后，“${term.value}”的含义才真正精确。`,
-  };
-}
-
-function termReportFor(term: ActiveTerm, subjectName: string, locale: UiLocale) {
-  const normalized = term.value.toLowerCase().replace(/[.,!?]/g, "");
-  if (locale === "en") return genericReport(term, subjectName, locale);
-  return TERM_REPORTS[normalized] || genericReport(term, subjectName, locale);
 }
 
 function ensureTargetCards(primary: string, fallback: string, locale: UiLocale, subjectId: SubjectId) {
@@ -304,10 +299,13 @@ export default function LecturerApp() {
   const [mode, setMode] = useState<TeachingMode>("concept");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [conversation, setConversation] = useState<ConversationTurn[]>([]);
+  const [conversationHydrated, setConversationHydrated] = useState(false);
   const [generatedDsl, setGeneratedDsl] = useState<string | null>(null);
   const [liveSources, setLiveSources] = useState<Source[]>([]);
   const [liveVisuals, setLiveVisuals] = useState<VisualReference[]>([]);
-  const [focusTopic, setFocusTopic] = useState<string | null>(null);
+  const [focusTopic, setFocusTopic] = useState<string | null>("lit-l1-1");
   const [toast, setToast] = useState<string | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [audioCapability, setAudioCapability] = useState<AudioCapability>({
@@ -353,17 +351,21 @@ export default function LecturerApp() {
     : undefined;
   const selectedSpeechMeta = SPEECH_PROVIDERS.find((provider) => provider.id === selectedSpeechProvider) || SPEECH_PROVIDERS[0];
   const selectedSpeechConnection = speechSession.connections[selectedSpeechProvider];
-  const offlineInstalledCount = Object.values(offlineVoiceState.installed).filter(Boolean).length;
+  const offlineInstalledCount = OFFLINE_VOICE_PACKS.filter((pack) => offlineVoiceState.installed[pack.language]).length;
+  const offlineAutomaticCount = offlineInstalledCount;
+  const activeCourseModule = courseModuleFor(subjectId, focusTopic);
+  const courseSources = sourcesForCourseModule(activeCourseModule);
+  const focusTopicTitle = locale === "en" ? activeCourseModule.titleEn : activeCourseModule.title;
+  const subjectConversation = conversation.filter((turn) => turn.subject === subjectId);
 
   const localizedLesson = locale === "en" ? lessonEn : lesson;
-  const modeDsl = mode === "case"
-    ? localizedLesson.caseDsl
-    : mode === "close-reading"
-      ? localizedLesson.closeReadingDsl
-      : localizedLesson.conceptDsl;
-  const localDsl = ensureTargetCards(modeDsl, localizedLesson.conceptDsl, locale, subjectId);
-  const visibleDsl = generatedDsl || localDsl;
-  const blocks = useMemo(() => parseLectureDsl(visibleDsl), [visibleDsl]);
+  const localDsl = buildCourseModuleDsl(activeCourseModule, mode, locale);
+  const visibleDsl = generatedDsl
+    ? ensureTargetCards(generatedDsl, localizedLesson.conceptDsl, locale, subjectId)
+    : localDsl;
+  const activeTermIsModuleTitle = Boolean(
+    activeTerm && isModuleTitleTerm(activeTerm.value, activeCourseModule),
+  );
   const visuals = liveVisuals.length ? liveVisuals : lesson.visuals;
 
   const filteredNotes = useMemo(
@@ -383,6 +385,22 @@ export default function LecturerApp() {
     window.localStorage.removeItem(LEGACY_INTERFACE_LANGUAGE_KEY);
     document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
     const frame = window.requestAnimationFrame(() => setLocale(next));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const raw = window.localStorage.getItem(CONVERSATION_STORAGE_KEY);
+      if (raw) {
+        try {
+          const saved = JSON.parse(raw) as ConversationTurn[];
+          setConversation(saved.filter((turn) => turn?.id && turn?.question && turn?.answerDsl).map((turn) => ({ ...turn, enhancing: false })));
+        } catch {
+          // Ignore malformed local conversation data.
+        }
+      }
+      setConversationHydrated(true);
+    });
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
@@ -427,6 +445,11 @@ export default function LecturerApp() {
     if (!notesHydrated) return;
     window.localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(notes));
   }, [notes, notesHydrated]);
+
+  useEffect(() => {
+    if (!conversationHydrated) return;
+    window.localStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify(conversation.slice(-80)));
+  }, [conversation, conversationHydrated]);
 
   useEffect(() => {
     if (!toast) return;
@@ -485,7 +508,6 @@ export default function LecturerApp() {
     window.localStorage.setItem(INTERFACE_LANGUAGE_KEY, next);
     document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
     setGeneratedDsl(null);
-    setFocusTopic(null);
     setToast(next === "zh" ? "界面已切换为中文" : "Interface switched to English");
   }
 
@@ -504,47 +526,90 @@ export default function LecturerApp() {
     setGeneratedDsl(null);
     setLiveSources([]);
     setLiveVisuals([]);
-    setFocusTopic(null);
+    setFocusTopic(courseModuleFor(next).id);
     setCurriculumLevel(0);
   }
 
-  async function requestLesson(nextMode: TeachingMode, requestedTopic?: string) {
+  async function requestLesson(nextMode: Exclude<TeachingMode, "question">, requestedTopic?: string) {
+    const requestedModule = courseModuleFor(subjectId, requestedTopic || focusTopic);
     setMode(nextMode);
     setLoading(true);
     setGeneratedDsl(null);
     setLiveSources([]);
     setLiveVisuals([]);
-    setFocusTopic(nextMode === "concept" && requestedTopic ? requestedTopic : null);
+    setFocusTopic(requestedModule.id);
 
-    try {
-      const response = await fetch("/api/lecture", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: subjectId, mode: nextMode, query: requestedTopic, interfaceLanguage: locale }),
-      });
-      if (!response.ok) throw new Error(String(response.status));
-      const data = (await response.json()) as {
-        text: string;
-        sources?: Source[];
-        visuals?: VisualReference[];
-      };
-      setGeneratedDsl(data.text);
-      setLiveSources(data.sources || []);
-      setLiveVisuals(data.visuals || []);
-      setToast(ui("已完成检索核验与 CLIL 术语编排", "Research verified and CLIL terminology structured"));
-    } catch {
-      setToast(ui("当前使用内置知识课程 · 未连接外部讲师服务", "Using the built-in course · no external lecturer connected"));
-    } finally {
-      setLoading(false);
-    }
+    setGeneratedDsl(buildCourseModuleDsl(requestedModule, nextMode, locale));
+    setLiveSources(sourcesForCourseModule(requestedModule).map((source) => ({ title: `${locale === "en" ? source.titleEn : source.title} · ${source.publisher}`, url: source.url })));
+    setToast(ui("已载入可离线使用的开放课程讲义与来源", "Loaded the offline open-course lesson and sources"));
+    setLoading(false);
   }
 
-  function submitQuestion(event: FormEvent<HTMLFormElement>) {
+  async function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = query.trim();
-    if (!value) return;
-    setQuery("");
-    void requestLesson("question", value);
+    if (!value || asking) return;
+
+    setAsking(true);
+    let turnId = "";
+    try {
+      const localAnswer = buildLocalCourseAnswer({
+        query: value,
+        subject: subjectId,
+        currentModuleId: activeCourseModule.id,
+        locale,
+      });
+      turnId = crypto.randomUUID();
+      const localSources = localAnswer.sources.map((source) => ({
+        title: `${locale === "en" ? source.titleEn : source.title} · ${source.publisher}`,
+        url: source.url,
+      }));
+      const turn: ConversationTurn = {
+        id: turnId,
+        subject: subjectId,
+        moduleId: localAnswer.modules[0]?.id || activeCourseModule.id,
+        question: value,
+        answerDsl: localAnswer.dsl,
+        sources: localSources,
+        origin: "local",
+        enhancing: true,
+      };
+      setConversation((current) => [...current, turn]);
+      setQuery("");
+      window.setTimeout(() => document.getElementById(`answer-${turnId}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+
+      try {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 20_000);
+        try {
+          const response = await fetch("/api/lecture", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subject: subjectId, mode: "question", query: value, currentModuleId: activeCourseModule.id, interfaceLanguage: locale }),
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error(String(response.status));
+          const data = (await response.json()) as { text: string; sources?: Source[] };
+          setConversation((current) => current.map((item) => item.id === turnId ? {
+            ...item,
+            answerDsl: ensureTargetCards(data.text, localAnswer.dsl, locale, subjectId),
+            sources: data.sources?.length ? data.sources : item.sources,
+            origin: "external",
+            enhancing: false,
+          } : item));
+          setToast(ui("已用外部讲师与来源增强本地回答", "Local answer enhanced by the external lecturer and sources"));
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      } catch {
+        setConversation((current) => current.map((item) => item.id === turnId ? { ...item, enhancing: false } : item));
+        setToast(ui("已使用本地课程回答 · 无需账户或网络", "Answered from the local course · no account or network required"));
+      }
+    } catch {
+      setToast(ui("本地课程暂时无法处理这个问题，输入内容已保留", "The local course could not process this question; your input was preserved"));
+    } finally {
+      setAsking(false);
+    }
   }
 
   async function speak(text: string, language: LanguageCode) {
@@ -591,9 +656,7 @@ export default function LecturerApp() {
       });
       setSpeechSession(getSessionSpeechState());
       setAudioCapability(await getAudioCapability());
-      const result = await playSpeech(locale === "en"
-        ? { text: "Build knowledge through language.", language: "EN" }
-        : { text: "知识为体，语言为用。", language: "CN" });
+      const result = await playSpeech({ text: "Build knowledge through language.", language: "EN" });
       setLastPlayback(result);
       setToast(ui(`${speechProviderLabel(selectedSpeechProvider)} 已连接 · ${result.voice} · ${result.sampleRate || 24_000} Hz`, `${selectedSpeechMeta.name} connected · ${result.voice} · ${result.sampleRate || 24_000} Hz`));
     } catch (error) {
@@ -651,6 +714,29 @@ export default function LecturerApp() {
     }
   }
 
+  async function previewOfflinePack(language: LanguageCode) {
+    const sample = VOICE_SAMPLES[language];
+    const key = `${language}:${sample}`;
+    setPlayingKey((current) => current === key ? null : key);
+    setOfflineError(null);
+    try {
+      const result = await playOfflineSpeech({
+        text: sample,
+        language,
+        onEnd: () => setPlayingKey((current) => current === key ? null : current),
+      });
+      if (result.engine === "stopped") {
+        setPlayingKey(null);
+        return;
+      }
+      setLastPlayback(result);
+      setToast(ui(`正在试听 ${result.voice}`, `Previewing ${result.voice}`));
+    } catch (error) {
+      setPlayingKey(null);
+      setOfflineError(locale === "en" ? "The cached voice pack could not synthesize this sample." : error instanceof Error ? error.message : "离线语音包试听失败。");
+    }
+  }
+
   function toggleOfflineVoices() {
     if (!offlineInstalledCount) {
       setOfflineError(ui("请先下载至少一个语言包。", "Download at least one voice pack first."));
@@ -673,13 +759,26 @@ export default function LecturerApp() {
 
   async function inspectTerm(term: ActiveTerm) {
     setActiveTerm(term);
-    setTermReport(termReportFor(term, subjectName, locale));
+    const normalized = term.value.toLowerCase().replace(/[.,!?]/g, "");
+    setTermReport(buildContextualTermReport({
+      term,
+      module: activeCourseModule,
+      dsl: visibleDsl,
+      locale,
+      knownReport: TERM_REPORTS[normalized],
+    }));
     setTermLoading(true);
     try {
       const response = await fetch("/api/term", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ term: term.value, language: term.language, subject: subjectId, interfaceLanguage: locale }),
+        body: JSON.stringify({
+          term: term.value,
+          language: term.language,
+          subject: subjectId,
+          moduleId: activeCourseModule.id,
+          interfaceLanguage: locale,
+        }),
       });
       if (!response.ok) throw new Error(String(response.status));
       setTermReport(await response.json() as TermReport);
@@ -704,15 +803,57 @@ export default function LecturerApp() {
             title={ui(`在 ${token.language} 维基百科检索 ${token.value}`, `Search ${token.language} Wikipedia for ${token.value}`)}
             aria-label={ui(`在维基百科检索 ${token.value}`, `Search Wikipedia for ${token.value}`)}
           >W</a>
-          <button
+          {token.language !== "CN" && <button
             type="button"
             className={playingKey === key ? "playing" : ""}
             aria-label={ui(`朗读 ${token.value}`, `Pronounce ${token.value}`)}
             onClick={() => void speak(token.value, token.language)}
-          >{playingKey === key ? "Ⅱ" : "♪"}</button>
+          >{playingKey === key ? "Ⅱ" : "♪"}</button>}
         </span>
       );
     });
+  }
+
+  function renderDslBlocks(dsl: string, keyPrefix: string) {
+    return parseLectureDsl(dsl).map((block, index) => {
+      const blockKey = `${keyPrefix}-${index}`;
+      if (block.type === "heading") return <h2 key={blockKey}><span>{String(index + 1).padStart(2, "0")}</span>{block.value}</h2>;
+      if (block.type === "paragraph") return <p key={blockKey}>{renderInline(block.tokens)}</p>;
+      const meta = LANGUAGE_META[block.language];
+      const sentenceKey = `${block.language}:${block.sentence}`;
+      return (
+        <section className={`language-card card-${block.language.toLowerCase()}`} key={blockKey} style={{ "--lang-color": meta.color } as React.CSSProperties}>
+          <header>
+            <span className="language-flag">{meta.flag}</span>
+            <span><small>{block.language}</small><strong>{meta.name}</strong></span>
+            <button type="button" onClick={() => void speak(block.sentence, block.language)} className={playingKey === sentenceKey ? "playing" : ""}>
+              {playingKey === sentenceKey ? "Ⅱ" : "▶"}<span>{ui("整句朗读", "Play sentence")}</span>
+            </button>
+          </header>
+          <p className="language-sentence">{block.sentence}</p>
+          <div className="word-breakdown">
+            {block.entries.map((entry) => {
+              const wordKey = `${block.language}:${entry.term}`;
+              return (
+                <div key={entry.term}>
+                  <button className="word-main" type="button" onClick={() => void inspectTerm({ value: entry.term, language: block.language })}>
+                    <strong>{entry.term}</strong><span>{entry.meaning}</span>
+                  </button>
+                  <p>{entry.grammar}</p>
+                  <a href={wikipediaHref(entry.term, block.language)} target="_blank" rel="noreferrer" title={ui("在维基百科检索", "Search Wikipedia")} aria-label={ui(`在维基百科检索 ${entry.term}`, `Search Wikipedia for ${entry.term}`)}>W</a>
+                  <button type="button" className={playingKey === wordKey ? "playing" : ""} onClick={() => void speak(entry.term, block.language)} aria-label={ui(`朗读 ${entry.term}`, `Pronounce ${entry.term}`)}>♪</button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    });
+  }
+
+  function clearSubjectConversation() {
+    setConversation((current) => current.filter((turn) => turn.subject !== subjectId));
+    setToast(ui("已清空本学科的本地追问记录", "Cleared local questions for this subject"));
   }
 
   function chooseTopic(topic: string) {
@@ -784,7 +925,7 @@ export default function LecturerApp() {
       <section className="academy-desk">
         <header className="academy-topbar">
           <div className="mobile-academy-brand"><span>深语</span><strong>{ui("语言专家", "Language Expert")}</strong></div>
-          <div className="course-path"><small>{subject.campaign}</small><span>{subjectName}</span><i>/</i><strong>{focusTopic || lesson.index.split(" · ").slice(-1)[0]}</strong></div>
+          <div className="course-path"><small>{subject.campaign}</small><span>{subjectName}</span><i>/</i><strong>{focusTopicTitle}</strong></div>
           <div className="quick-actions" aria-label={ui("快捷学术指令", "Academic quick actions")}>
             {QUICK_ACTIONS.map((action) => (
               <button
@@ -828,55 +969,17 @@ export default function LecturerApp() {
             <article className="lecture-paper" aria-busy={loading}>
               <div className="paper-spine" />
               <header className="lecture-hero">
-                <div className="lecture-index"><span>{subject.symbol}</span>{focusTopic ? `${subject.campaign} · CURRICULUM FOCUS` : lesson.index}</div>
-                <h1>{(focusTopic || localizedLesson.title).split("\n").map((line, index) => <Fragment key={`${line}-${index}`}>{index > 0 && <br />}{line}</Fragment>)}</h1>
-                <p>{focusTopic ? ui(`从课程树进入“${focusTopic}”，以下内置讲义展示该学科的 CLIL 分析协议；连接讲师服务后会生成针对该小节的完整内容。`, `Selected from the curriculum: “${focusTopic}”. This built-in lecture demonstrates the CLIL protocol; a connected lecturer can generate a complete lesson for this topic.`) : localizedLesson.deck}</p>
+                <div className="lecture-index"><span>{subject.symbol}</span>{subject.campaign} · {activeCourseModule.level} · OPEN COURSE</div>
+                <h1>{focusTopicTitle}</h1>
+                <p>{locale === "en" ? activeCourseModule.overviewEn : activeCourseModule.overview}</p>
               </header>
 
-              {!focusTopic && (
-                <blockquote className="academy-quote">
-                  <p>{lesson.quote}</p><cite>{lesson.quoteSource}</cite>
-                </blockquote>
-              )}
-
               <div className="dsl-content">
-                {blocks.map((block, index) => {
-                  if (block.type === "heading") return <h2 key={index}><span>{String(index + 1).padStart(2, "0")}</span>{block.value}</h2>;
-                  if (block.type === "paragraph") return <p key={index}>{renderInline(block.tokens)}</p>;
-                  const meta = LANGUAGE_META[block.language];
-                  const sentenceKey = `${block.language}:${block.sentence}`;
-                  return (
-                    <section className={`language-card card-${block.language.toLowerCase()}`} key={index} style={{ "--lang-color": meta.color } as React.CSSProperties}>
-                      <header>
-                        <span className="language-flag">{meta.flag}</span>
-                        <span><small>{block.language}</small><strong>{meta.name}</strong></span>
-                        <button type="button" onClick={() => void speak(block.sentence, block.language)} className={playingKey === sentenceKey ? "playing" : ""}>
-                          {playingKey === sentenceKey ? "Ⅱ" : "▶"}<span>{ui("整句朗读", "Play sentence")}</span>
-                        </button>
-                      </header>
-                      <p className="language-sentence">{block.sentence}</p>
-                      <div className="word-breakdown">
-                        {block.entries.map((entry) => {
-                          const wordKey = `${block.language}:${entry.term}`;
-                          return (
-                            <div key={entry.term}>
-                              <button className="word-main" type="button" onClick={() => void inspectTerm({ value: entry.term, language: block.language })}>
-                                <strong>{entry.term}</strong><span>{entry.meaning}</span>
-                              </button>
-                              <p>{entry.grammar}</p>
-                              <a href={wikipediaHref(entry.term, block.language)} target="_blank" rel="noreferrer" title={ui("在维基百科检索", "Search Wikipedia")} aria-label={ui(`在维基百科检索 ${entry.term}`, `Search Wikipedia for ${entry.term}`)}>W</a>
-                              <button type="button" className={playingKey === wordKey ? "playing" : ""} onClick={() => void speak(entry.term, block.language)} aria-label={ui(`朗读 ${entry.term}`, `Pronounce ${entry.term}`)}>♪</button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  );
-                })}
+                {renderDslBlocks(visibleDsl, "lesson")}
               </div>
 
               <section className="carry-question">
-                <span>✳</span><div><small>{ui("今日留题 · QUESTION TO CARRY", "QUESTION TO CARRY · 今日留题")}</small><p>{localizedLesson.question}</p></div>
+                <span>✳</span><div><small>{ui("今日留题 · QUESTION TO CARRY", "QUESTION TO CARRY · 今日留题")}</small><p>{locale === "en" ? activeCourseModule.inquiryEn : activeCourseModule.inquiry}</p></div>
               </section>
 
               <section className="visual-gallery">
@@ -894,6 +997,48 @@ export default function LecturerApp() {
                 </div>
               </section>
 
+              {subjectConversation.length > 0 && (
+                <section className="expert-conversation" aria-label={ui("深度语言专家追问记录", "Deep Language Expert questions")} aria-live="polite">
+                  <header>
+                    <div><small>LOCAL-FIRST · OPTIONAL AI</small><h2>{ui("追问与回答", "Questions and answers")}</h2><p>{ui("记录只保存在当前设备；本地课程始终可以回答。", "History stays on this device; the local course always remains available.")}</p></div>
+                    <button type="button" onClick={clearSubjectConversation}>{ui("清空本学科", "Clear subject")}</button>
+                  </header>
+                  <div className="conversation-turns">
+                    {subjectConversation.map((turn, turnIndex) => (
+                      <article className="conversation-turn" id={`answer-${turn.id}`} key={turn.id}>
+                        <div className="learner-question">
+                          <span>{ui("你", "YOU")}</span>
+                          <p>{turn.question}</p>
+                        </div>
+                        <header className="answer-header">
+                          <span className="expert-avatar">深</span>
+                          <div><strong>{ui("深度语言专家", "Deep Language Expert")}</strong><small>{subject.campaign} · Q&amp;A {String(turnIndex + 1).padStart(2, "0")}</small></div>
+                          <span className={`answer-origin ${turn.origin}`}>
+                            {turn.enhancing
+                              ? ui("正在检查可选增强…", "Checking optional enhancement…")
+                              : turn.origin === "external"
+                                ? ui("AI + 已核验来源", "AI + VERIFIED SOURCES")
+                                : ui("本地开放课程", "LOCAL OPEN COURSE")}
+                          </span>
+                        </header>
+                        <div className="dsl-content answer-dsl">
+                          {renderDslBlocks(turn.answerDsl, `answer-${turn.id}`)}
+                        </div>
+                        <footer className="answer-sources">
+                          <span>{ui("回答依据", "ANSWER SOURCES")}</span>
+                          <div>
+                            {turn.sources.slice(0, 4).map((source, sourceIndex) => (
+                              <a href={source.url} target="_blank" rel="noreferrer" key={`${source.url}-${sourceIndex}`}>{source.title}<i>↗</i></a>
+                            ))}
+                          </div>
+                          {turnIndex === subjectConversation.length - 1 && <small>{ui("你可以在下方继续追问；后续问题会保留在同一学科记录中。", "Ask a follow-up below; later questions remain in this subject history.")}</small>}
+                        </footer>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {loading && <div className="academy-loading"><span /><p>{ui("正在组织概念、语言与来源…", "Organizing concepts, languages and sources…")}</p></div>}
             </article>
 
@@ -902,19 +1047,19 @@ export default function LecturerApp() {
                 <header><span>{ui("学习进度", "Learning progress")}</span><small>{subject.campaign} · 38%</small></header>
                 <div className="progress-track"><i /></div>
                 <p><strong>{subjectName}</strong><small>{subject.track}</small></p>
-                <button type="button" onClick={() => setCurriculumOpen(true)}>{ui("查看三级课程树", "View three-level curriculum")} <span>→</span></button>
+                <button type="button" onClick={() => setCurriculumOpen(true)}>{ui("查看六阶段课程树", "View six-stage curriculum")} <span>→</span></button>
               </section>
 
               <section className="voice-strategy">
                 <header>
                   <span>{ui("真实多语声线", "Multilingual voices")}</span>
                   <span className="voice-header-actions">
-                    <small>{speechSession.activeProvider ? `${speechSession.activeProvider.toUpperCase()} TTS` : offlineVoiceState.enabled && offlineInstalledCount ? "OFFLINE ONNX" : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
+                    <small>{speechSession.activeProvider ? `${speechSession.activeProvider.toUpperCase()} TTS` : offlineVoiceState.enabled && offlineAutomaticCount ? "OFFLINE + DEVICE" : audioCapability.cloudReady ? "NEURAL TTS" : "DEVICE TTS"}</small>
                     <button type="button" onClick={() => { setOfflineError(null); setOfflineVoiceOpen(true); }}>{ui("离线包", "Offline")}</button>
                     <button type="button" onClick={() => { setSpeechError(null); setSpeechSettingsOpen(true); }}>{Object.keys(speechSession.connections).length ? ui("云端", "Cloud") : ui("连接", "Connect")}</button>
                   </span>
                 </header>
-                {ALL_LANGUAGE_CODES.map((language) => {
+                {ALL_LANGUAGE_CODES.filter((language) => language !== "CN").map((language) => {
                   const profile = voiceProfileForLanguage(language);
                   const sample = VOICE_SAMPLES[language];
                   const sampleKey = `${language}:${sample}`;
@@ -926,7 +1071,7 @@ export default function LecturerApp() {
                     </button>
                   );
                 })}
-                <p className={audioCapability.cloudReady || offlineVoiceState.enabled && offlineInstalledCount ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : offlineVoiceState.enabled && offlineInstalledCount ? ui(`${offlineInstalledCount} 个本地语音包 · 无需联网合成`, `${offlineInstalledCount} local voice packs · offline synthesis`) : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : ui("分句朗读 · 跨语切换 · 真实声线检测", "Sentence-aware · language switching · real voice detection")}</p>
+                <p className={audioCapability.cloudReady || offlineVoiceState.enabled && offlineInstalledCount ? "cloud-ready" : "device-only"}><i />{lastPlayback ? `${lastPlayback.label} · ${lastPlayback.voice}` : offlineVoiceState.enabled && offlineInstalledCount ? ui(`${offlineInstalledCount} 个目标语言本地包 · 中文语音已停用`, `${offlineInstalledCount} target-language packs · Chinese speech disabled`) : audioCapability.cloudReady ? `${audioCapability.label} · 24 kHz PCM` : ui("七种目标语言朗读 · 中文语音已停用", "Seven target-language voices · Chinese speech disabled")}</p>
                 {audioCapability.cloudReady && <p className="voice-disclosure">{ui("AI 生成语音 · 非真人录音 · 使用者自备服务 Key", "AI-generated speech · not a human recording · user-supplied key")}</p>}
               </section>
 
@@ -941,10 +1086,10 @@ export default function LecturerApp() {
 
               <section className="source-panel">
                 <header><span>{ui("学术依据", "Academic sources")}</span><small>{liveSources.length ? "GROUNDED" : "CURATED"}</small></header>
-                {(liveSources.length ? liveSources : visuals.map((visual) => ({ title: visual.title, url: visual.sourceUrl }))).slice(0, 4).map((source, index) => (
+                {(liveSources.length ? liveSources : courseSources.map((source) => ({ title: locale === "en" ? source.titleEn : source.title, url: source.url }))).slice(0, 4).map((source, index) => (
                   <a href={source.url} target="_blank" rel="noreferrer" key={source.url}><span>0{index + 1}</span><strong>{source.title}</strong><i>↗</i></a>
                 ))}
-                <p><i />{liveSources.length ? ui("检索来源已连接", "Live sources connected") : ui("内置公共领域资料", "Built-in public-domain material")}</p>
+                <p><i />{liveSources.length ? ui("课程来源已载入", "Course sources loaded") : ui("开放教材与大学公开课", "Open textbooks and university courses")}</p>
               </section>
             </aside>
           </div>
@@ -952,16 +1097,16 @@ export default function LecturerApp() {
 
         <form className="academy-ask" onSubmit={submitQuestion}>
           <span className="ask-mark">?</span>
-          <div><label htmlFor="academy-question">{ui("向深度语言专家追问", "Ask Deep Language Expert")}</label><input id="academy-question" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ui(`关于${subject.name}，继续追问一个词语、概念、原文或案例…`, `Ask about a term, concept, source or case in ${subject.nameEn}…`)} autoComplete="off" /></div>
+          <div><label htmlFor="academy-question">{ui("向深度语言专家追问", "Ask Deep Language Expert")}<small>{ui("本地可用 · AI 可选增强", "Local answer · optional AI enhancement")}</small></label><input id="academy-question" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ui(`关于${subject.name}，继续追问一个词语、概念、原文或案例…`, `Ask about a term, concept, source or case in ${subject.nameEn}…`)} autoComplete="off" maxLength={2000} /></div>
           <span className="ask-hints"><kbd>CLIL</kbd><kbd>FR</kbd><kbd>DE</kbd><kbd>IT</kbd><kbd>ES</kbd><kbd>KO</kbd><kbd>JA</kbd></span>
-          <button type="submit" disabled={!query.trim() || loading} aria-label={ui("发送问题", "Send question")}>↑</button>
+          <button type="submit" disabled={!query.trim() || asking} aria-label={ui("发送问题", "Send question")}>{asking ? "…" : "↑"}</button>
         </form>
       </section>
 
       {curriculumOpen && (
         <ModalShell label={ui("课程大纲", "Curriculum")} onClose={() => setCurriculumOpen(false)} wide>
           <header className="modal-header curriculum-header">
-            <div><small>{subject.campaign} · ACADEMIC CAMPAIGN</small><h2>{ui(`${subject.name}课程大纲`, `${subject.nameEn} curriculum`)}</h2><p>{subject.track} · {ui("三阶段进阶路径", "Three-stage learning path")}</p></div>
+            <div><small>{subject.campaign} · ACADEMIC CAMPAIGN</small><h2>{ui(`${subject.name}课程大纲`, `${subject.nameEn} curriculum`)}</h2><p>{subject.track} · {ui("六阶段专家进阶路径", "Six-stage path to expert synthesis")}</p></div>
             <button type="button" onClick={() => setCurriculumOpen(false)} aria-label={ui("关闭", "Close")}>×</button>
           </header>
           <div className="curriculum-body">
@@ -1102,13 +1247,13 @@ export default function LecturerApp() {
                     <p>{locale === "en" ? pack.descriptionEn : pack.description}</p>
                     <dl><div><dt>{ui("模型", "Model")}</dt><dd>{pack.model}</dd></div><div><dt>{ui("许可", "License")}</dt><dd><a href={pack.licenseUrl} target="_blank" rel="noreferrer">{pack.license} ↗</a></dd></div></dl>
                     {downloading && <div className="offline-download-progress"><span style={{ width: `${Math.max(3, progress)}%` }} /><small>{progress > 0 ? `${progress}%` : ui("准备下载…", "Preparing…")}</small></div>}
-                    <footer><a href={pack.sourceUrl} target="_blank" rel="noreferrer">{ui("模型卡与来源", "Model card and source")} ↗</a><button type="button" disabled={installed || offlineDownloading !== null} onClick={() => void installOfflinePack(pack.language)}>{installed ? ui("已缓存在本机", "Cached locally") : downloading ? ui("正在下载…", "Downloading…") : ui("下载语音包", "Download pack")}</button></footer>
+                    <footer><a href={pack.sourceUrl} target="_blank" rel="noreferrer">{ui("模型卡与来源", "Model card and source")} ↗</a><button type="button" disabled={!installed && offlineDownloading !== null} onClick={() => void (installed ? previewOfflinePack(pack.language) : installOfflinePack(pack.language))}>{installed ? playingKey === `${pack.language}:${VOICE_SAMPLES[pack.language]}` ? ui("停止试听", "Stop preview") : ui("▶ 试听", "▶ Preview") : downloading ? ui("正在下载…", "Downloading…") : ui("下载到此浏览器", "Download to this browser")}</button></footer>
                   </article>
                 );
               })}
             </div>
             {offlineError && <p className="offline-error" role="alert">{offlineError}</p>}
-            <footer className="offline-license-note"><span>LICENSE</span><p>{ui("中文包采用 Apache-2.0；MMS 英、法、德、意、西、韩模型采用 CC-BY-NC-4.0，仅适用于非商业用途。日语暂用设备或云端声线。软件代码采用 MIT，模型权利与代码许可彼此独立。", "The Chinese pack is Apache-2.0. MMS English, French, German, Italian, Spanish and Korean models are CC-BY-NC-4.0 and non-commercial only. Japanese currently uses device or cloud voices. The software is MIT; model and code licenses remain separate.")}</p></footer>
+            <footer className="offline-license-note"><span>LICENSE</span><p>{ui("中文语音已删除。MMS 英、法、德、意、西、韩模型采用 CC-BY-NC-4.0，仅适用于非商业用途；日语暂用设备或云端声线。软件代码采用 MIT，模型权利与代码许可彼此独立。", "Chinese speech has been removed. MMS English, French, German, Italian, Spanish and Korean models are CC-BY-NC-4.0 and non-commercial only; Japanese currently uses device or cloud voices. The software is MIT; model and code licenses remain separate.")}</p></footer>
           </div>
         </ModalShell>
       )}
@@ -1122,19 +1267,19 @@ export default function LecturerApp() {
           <div className="term-report-grid">
             {([
               [ui("学术定义", "Definition"), "DEFINITION", termReport.definition, locale === "en" ? "EN" : "CN"],
-              [ui("词源与构词", "Etymology"), "ETYMOLOGY", termReport.etymology, locale === "en" ? "EN" : "CN"],
-              [ui("语法属性", "Grammar"), "GRAMMAR", termReport.grammar, locale === "en" ? "EN" : "CN"],
-              [ui("语义微析", "Nuance"), "NUANCE", termReport.nuance, locale === "en" ? "EN" : "CN"],
+              [activeTermIsModuleTitle ? ui("标题结构", "Title structure") : ui("词源与构词", "Etymology"), activeTermIsModuleTitle ? "TITLE STRUCTURE" : "ETYMOLOGY", termReport.etymology, locale === "en" ? "EN" : "CN"],
+              [activeTermIsModuleTitle ? ui("标题语法", "Title grammar") : ui("语法属性", "Grammar"), activeTermIsModuleTitle ? "TITLE GRAMMAR" : "GRAMMAR", termReport.grammar, locale === "en" ? "EN" : "CN"],
+              [activeTermIsModuleTitle ? ui("概念边界", "Concept boundary") : ui("语义微析", "Nuance"), activeTermIsModuleTitle ? "CONCEPT BOUNDARY" : "NUANCE", termReport.nuance, locale === "en" ? "EN" : "CN"],
             ] as Array<[string, string, string, LanguageCode]>).map(([title, en, value, language]) => (
-              <section key={en}><header><span>{title}<small>{en}</small></span><button type="button" onClick={() => void speak(value, language)}>♪</button></header><p>{value}</p></section>
+              <section key={en}><header><span>{title}<small>{en}</small></span>{language !== "CN" && <button type="button" onClick={() => void speak(value, language)}>♪</button>}</header><p>{value}</p></section>
             ))}
-            <section className="term-example"><header><span>{ui("经典例句", "Academic example")}<small>ACADEMIC EXAMPLE</small></span><button type="button" onClick={() => void speak(termReport.example, activeTerm.language)}>▶</button></header><blockquote><p>{termReport.example}</p><cite>{termReport.translation}</cite></blockquote></section>
+            <section className="term-example"><header><span>{activeTermIsModuleTitle ? ui("具体课程任务", "Concrete course task") : ui("具体语境", "Context example")}<small>{activeTermIsModuleTitle ? "CONCRETE COURSE TASK" : "CONTEXT EXAMPLE"}</small></span>{activeTerm.language !== "CN" && <button type="button" onClick={() => void speak(termReport.example, activeTerm.language)}>▶</button>}</header><blockquote><p>{termReport.example}</p><cite>{termReport.translation}</cite></blockquote></section>
           </div>
           <nav className="wikipedia-links" aria-label={ui("维基百科深度链接", "Wikipedia deep links")}>
             <span>{ui("在维基百科继续探索", "Continue on Wikipedia")}</span>
             {ALL_LANGUAGE_CODES.map((language) => <a href={wikipediaHref(activeTerm.value, language)} target="_blank" rel="noreferrer" key={language}>{language} Wikipedia ↗</a>)}
           </nav>
-          <footer className="term-modal-footer"><span className={termLoading ? "loading" : ""} /><p>{termLoading ? ui("正在尝试获取实时语言学报告…", "Fetching a live linguistic report…") : ui("内置报告可离线使用；术语已连接八语维基百科检索。", "The built-in report works offline; the term links to eight Wikipedia editions.")}</p></footer>
+          <footer className="term-modal-footer"><span className={termLoading ? "loading" : ""} /><p>{termLoading ? ui("正在尝试获取经课程语境约束的实时报告…", "Fetching a live report constrained by the course context…") : ui("报告依据当前课程或词卡生成；缺少可靠资料时会明确标注，不使用占位套话。", "The report is grounded in the current lesson or term card; missing evidence is marked explicitly instead of filled with boilerplate.")}</p></footer>
         </ModalShell>
       )}
 

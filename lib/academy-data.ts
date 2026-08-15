@@ -1,4 +1,5 @@
 import type { SubjectId } from "./prompts";
+import { COURSE_MODULES } from "./course-library";
 
 export const ALL_LANGUAGE_CODES = ["CN", "EN", "FR", "DE", "IT", "ES", "KO", "JA"] as const;
 export type LanguageCode = typeof ALL_LANGUAGE_CODES[number];
@@ -16,13 +17,56 @@ export type Subject = {
 };
 
 export type CurriculumLevel = {
-  id: "L1" | "L2" | "L3";
+  id: "L1" | "L2" | "L3" | "L4" | "L5" | "L6";
   name: string;
   en: string;
   descriptor: string;
   descriptorEn: string;
   topics: string[];
   topicsEn: string[];
+};
+
+const ADVANCED_CURRICULUM: Record<SubjectId, CurriculumLevel[]> = {
+  literature: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "叙事学、比较诗学与档案阅读", descriptorEn: "Narratology, comparative poetics and archival reading", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "经典、媒介与数字人文", descriptorEn: "Canons, media and digital humanities", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "原创批评、翻译实践与公共写作", descriptorEn: "Original criticism, translation practice and public writing", topics: [], topicsEn: [] },
+  ],
+  economics: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "理论建模、宏观测量与因果识别", descriptorEn: "Theory, macro measurement and causal identification", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "市场权力、劳动、发展与环境", descriptorEn: "Market power, labor, development and environment", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "制度、政策评估与可复现研究", descriptorEn: "Institutions, policy evaluation and reproducible research", topics: [], topicsEn: [] },
+  ],
+  psychology: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "测量、实验设计与认知神经方法", descriptorEn: "Measurement, experimental design and cognitive neuroscience", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "分类、文化发展与计算模型", descriptorEn: "Classification, culture, development and computational models", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "元分析、干预伦理与独立研究", descriptorEn: "Meta-analysis, intervention ethics and independent research", topics: [], topicsEn: [] },
+  ],
+  business: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "财务、运营与市场证据", descriptorEn: "Finance, operations and market evidence", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "竞争、组织设计与治理", descriptorEn: "Competition, organization design and governance", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "跨境转型、情景规划与高层决策", descriptorEn: "Cross-border transformation, scenarios and executive decisions", topics: [], topicsEn: [] },
+  ],
+  daily: [
+    { id: "L4", name: "独立", en: "Independent", descriptor: "公共服务、职场与媒体理解", descriptorEn: "Public services, work and media literacy", topics: [], topicsEn: [] },
+    { id: "L5", name: "精通", en: "Proficiency", descriptor: "语域、幽默与冲突调解", descriptorEn: "Register, humor and conflict mediation", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Mediation", descriptor: "主持、公共表达与跨语社会参与", descriptorEn: "Facilitation, public speaking and plurilingual participation", topics: [], topicsEn: [] },
+  ],
+  art: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "技术艺术史、影像与建筑", descriptorEn: "Technical art history, lens media and architecture", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "全球现代性、权力与数字媒介", descriptorEn: "Global modernities, power and digital media", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "来源研究、策展与原创论证", descriptorEn: "Provenance, curating and original argument", topics: [], topicsEn: [] },
+  ],
+  philosophy: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "形式逻辑、语言分析与伦理论证", descriptorEn: "Formal logic, language analysis and ethical argument", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "心灵、科学、正义与权力", descriptorEn: "Mind, science, justice and power", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "比较哲学、原创论文与公共哲学", descriptorEn: "Comparative philosophy, original theses and public philosophy", topics: [], topicsEn: [] },
+  ],
+  science: [
+    { id: "L4", name: "方法", en: "Methods", descriptor: "数学工具、统计推断与可复现实验", descriptorEn: "Mathematics, statistical inference and reproducible experiments", topics: [], topicsEn: [] },
+    { id: "L5", name: "研究", en: "Research", descriptor: "安全、生物技术与气候能源系统", descriptorEn: "Security, biotechnology, climate and energy systems", topics: [], topicsEn: [] },
+    { id: "L6", name: "专家", en: "Expert Synthesis", descriptor: "量子信息、AI 系统与研究架构", descriptorEn: "Quantum information, AI systems and research architecture", topics: [], topicsEn: [] },
+  ],
 };
 
 export type VisualReference = {
@@ -109,6 +153,18 @@ export const CURRICULUM: Record<SubjectId, CurriculumLevel[]> = {
     { id: "L3", name: "高阶", en: "Frontier", descriptor: "前沿理论与技术伦理", descriptorEn: "Frontier theory and technology ethics", topics: ["量子叠加与测量", "大模型与涌现能力", "技术风险与可解释性"], topicsEn: ["Quantum superposition and measurement", "Large models and emergent capability", "Technology risk and explainability"] },
   ],
 };
+
+// Keep the visible curriculum and the complete built-in course library in one
+// source of truth. Descriptors above define the progression; module titles and
+// explanations live in course-library.ts.
+(Object.keys(CURRICULUM) as SubjectId[]).forEach((subject) => {
+  CURRICULUM[subject].push(...ADVANCED_CURRICULUM[subject]);
+  CURRICULUM[subject].forEach((level) => {
+    const modules = COURSE_MODULES.filter((module) => module.subject === subject && module.level === level.id);
+    level.topics = modules.map((module) => module.title);
+    level.topicsEn = modules.map((module) => module.titleEn);
+  });
+});
 
 const VISUALS = {
   freud: { src: "/gallery/freud.jpg", title: "Sigmund Freud, 1926", caption: "Ferdinand Schmutzer 摄影；精神分析术语的历史语境。", captionEn: "Ferdinand Schmutzer's portrait situates psychoanalytic vocabulary in its historical setting.", sourceUrl: "https://commons.wikimedia.org/wiki/File:Sigmund_Freud_1926_(cropped).jpg", sourceLabel: "Wikimedia Commons · Public Domain" },

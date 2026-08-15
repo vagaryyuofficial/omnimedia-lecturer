@@ -6,8 +6,8 @@
   --line: rgb(32 30 29 / 9%);
   --paper: #fffefd;
   --accent: #9a5d47;
-  --font-scale: 1.18;
-  --minimum-font-size: max(var(--minimum-font-size), calc(11px * var(--font-scale)));
+  --font-scale: 1;
+  --minimum-font-size: 13px;
 }
 * { box-sizing: border-box; }
 
@@ -20,7 +20,7 @@ body {
   margin: 0;
   color: var(--ink);
   background: #e8e7e5;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -44,13 +44,28 @@ button { color: inherit; }
 }
 
 .academy-app[data-text-size="large"] {
-  --font-scale: 1.35;
-  --minimum-font-size: max(var(--minimum-font-size), calc(12px * var(--font-scale)));
+  --font-scale: 1.08;
+  --minimum-font-size: 14px;
 }
 
 .academy-app[data-text-size="extra"] {
-  --font-scale: 1.55;
-  --minimum-font-size: max(var(--minimum-font-size), calc(13px * var(--font-scale)));
+  --font-scale: 1.14;
+  --minimum-font-size: 15px;
+}
+
+.lecture-paper {
+  --font-scale: 1.15;
+  --minimum-font-size: 15px;
+}
+
+.academy-app[data-text-size="large"] .lecture-paper {
+  --font-scale: 1.28;
+  --minimum-font-size: 17px;
+}
+
+.academy-app[data-text-size="extra"] .lecture-paper {
+  --font-scale: 1.42;
+  --minimum-font-size: 19px;
 }
 
 .academy-sidebar {
@@ -101,16 +116,16 @@ button { color: inherit; }
 .academy-brand strong {
   font-size: max(var(--minimum-font-size), calc(13px * var(--font-scale)));
   font-weight: 680;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.035em;
   white-space: nowrap;
 }
 
 .academy-brand small {
   color: #8e8d91;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: max(var(--minimum-font-size), calc(7px * var(--font-scale)));
   font-weight: 650;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.075em;
 }
 
 .campaign-label {
@@ -118,10 +133,10 @@ button { color: inherit; }
   justify-content: space-between;
   margin: 0 9px 8px;
   color: #aaa8ab;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: max(var(--minimum-font-size), calc(7.5px * var(--font-scale)));
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.06em;
 }
 
 .campaign-list {
@@ -215,7 +230,7 @@ button { color: inherit; }
 .campaign-name small {
   overflow: hidden;
   color: #9a989c;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: max(var(--minimum-font-size), calc(6.7px * var(--font-scale)));
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -404,7 +419,7 @@ button { color: inherit; }
 }
 
 .quick-actions b { font-size: max(var(--minimum-font-size), calc(9px * var(--font-scale))); font-weight: 650; }
-.quick-actions small { color: #a09d9f; font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); letter-spacing: 0.04em; }
+.quick-actions small { color: #a09d9f; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); letter-spacing: 0.035em; }
 
 .topbar-tools {
   display: flex;
@@ -433,7 +448,7 @@ button { color: inherit; }
   color: #777376;
   background: transparent;
   box-shadow: none;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   font-size: max(var(--minimum-font-size), calc(8px * var(--font-scale)));
   font-weight: 700;
 }
@@ -466,7 +481,7 @@ button { color: inherit; }
   color: #858184;
   background: transparent;
   box-shadow: none;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   font-size: max(var(--minimum-font-size), calc(7px * var(--font-scale)));
 }
 
@@ -872,6 +887,52 @@ button { color: inherit; }
 .visual-copy small { margin-top: 4px; color: #878180; font-family: "Songti SC", "STSong", serif; font-size: max(var(--minimum-font-size), calc(8px * var(--font-scale))); line-height: 1.5; }
 .visual-copy i { margin-top: auto; padding-top: 6px; color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); font-style: normal; }
 
+.expert-conversation {
+  margin: 36px 0 0 43px;
+  padding-top: 27px;
+  border-top: 1px solid var(--line);
+}
+
+.expert-conversation > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 15px;
+}
+
+.expert-conversation > header small { color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(6px * var(--font-scale))); font-weight: 750; letter-spacing: 0.1em; }
+.expert-conversation > header h2 { margin: 3px 0 0; color: #403b3c; font-family: "Songti SC", "STSong", serif; font-size: max(var(--minimum-font-size), calc(18px * var(--font-scale))); }
+.expert-conversation > header p { margin: 4px 0 0; color: #8c8787; font-size: max(var(--minimum-font-size), calc(7.5px * var(--font-scale))); }
+.expert-conversation > header button { padding: 6px 9px; border: 1px solid rgb(0 0 0 / 8%); border-radius: 7px; color: #8b8586; background: #fff; font-size: max(var(--minimum-font-size), calc(6.5px * var(--font-scale))); cursor: pointer; }
+
+.conversation-turns { display: flex; flex-direction: column; gap: 16px; }
+.conversation-turn { scroll-margin-top: 24px; overflow: hidden; border: 1px solid rgb(0 0 0 / 8%); border-radius: 12px; background: #fff; box-shadow: 0 8px 25px rgb(55 47 43 / 5%); }
+
+.learner-question { display: grid; grid-template-columns: 35px minmax(0, 1fr); align-items: start; gap: 10px; padding: 14px 16px; background: color-mix(in srgb, var(--accent) 5%, white); }
+.learner-question > span { display: grid; min-height: 25px; place-items: center; border-radius: 7px; color: #fff; background: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(6px * var(--font-scale))); font-weight: 800; }
+.learner-question > p { margin: 1px 0 0; color: #413c3d; font-family: "Songti SC", "STSong", serif; font-size: max(var(--minimum-font-size), calc(11px * var(--font-scale))); line-height: 1.7; }
+
+.answer-header { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 14px 16px 12px; border-top: 1px solid rgb(0 0 0 / 5%); border-bottom: 1px solid rgb(0 0 0 / 6%); }
+.expert-avatar { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 9px; color: #fff; background: linear-gradient(145deg, #302d2e, #171617); font-family: Georgia, serif; }
+.answer-header > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.answer-header > div strong { font-size: max(var(--minimum-font-size), calc(8.5px * var(--font-scale))); }
+.answer-header > div small { color: #9a9595; font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); }
+.answer-origin { padding: 4px 6px; border-radius: 5px; color: #55765f; background: #eaf2ec; font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5px * var(--font-scale))); font-weight: 750; letter-spacing: 0.04em; }
+.answer-origin.external { color: #536f93; background: #e9eff7; }
+
+.answer-dsl { padding: 2px 17px 14px; }
+.answer-dsl > h2 { grid-template-columns: 25px minmax(0, 1fr); gap: 8px; margin-top: 17px; padding-top: 15px; font-size: max(var(--minimum-font-size), calc(13px * var(--font-scale))); }
+.answer-dsl > p { margin-left: 33px; font-size: max(var(--minimum-font-size), calc(10px * var(--font-scale))); line-height: 1.8; }
+.answer-dsl > .language-card { margin-left: 33px; }
+
+.answer-sources { padding: 13px 16px 15px; border-top: 1px solid rgb(0 0 0 / 6%); background: #faf9f8; }
+.answer-sources > span { color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); font-weight: 800; letter-spacing: 0.08em; }
+.answer-sources > div { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.answer-sources a { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid rgb(0 0 0 / 7%); border-radius: 6px; color: #625d5e; background: #fff; font-size: max(var(--minimum-font-size), calc(6px * var(--font-scale))); text-decoration: none; }
+.answer-sources a i { color: var(--accent); font-style: normal; }
+.answer-sources > small { display: block; margin-top: 9px; color: #989393; font-size: max(var(--minimum-font-size), calc(6.5px * var(--font-scale))); line-height: 1.55; }
+
 .academy-loading {
   position: absolute;
   inset: 0;
@@ -949,10 +1010,10 @@ button { color: inherit; }
   cursor: pointer;
 }
 
-.voice-strategy > button > span { color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(6.5px * var(--font-scale))); font-weight: 700; }
-.voice-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.voice-strategy > button > span:first-child { color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(6.5px * var(--font-scale))); font-weight: 700; }
+.voice-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .voice-copy strong { overflow: hidden; color: #575254; font-size: max(var(--minimum-font-size), calc(8px * var(--font-scale))); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.voice-copy small { overflow: hidden; color: #9b9697; font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); text-overflow: ellipsis; white-space: nowrap; }
+.voice-copy small { overflow: hidden; color: #9b9697; font-size: max(var(--minimum-font-size), calc(5.5px * var(--font-scale))); text-overflow: ellipsis; white-space: nowrap; }
 .mini-wave { display: flex; align-items: center; justify-content: flex-end; gap: 2px; height: 14px; }
 .mini-wave b { display: block; width: 2px; height: 5px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 45%, white); }
 .mini-wave b:nth-child(2) { height: 11px; }
@@ -967,7 +1028,7 @@ button { color: inherit; }
 .voice-strategy > p.voice-disclosure { padding-top: 0; color: #aaa5a5; font-size: max(var(--minimum-font-size), calc(5px * var(--font-scale))); letter-spacing: 0.02em; }
 
 .protocol-card dl { margin: 0; padding: 6px 12px 10px; }
-.protocol-card dl > div { display: grid; grid-template-columns: 81px minmax(0, 1fr); align-items: center; min-height: 34px; border-bottom: 1px solid rgb(0 0 0 / 5%); }
+.protocol-card dl > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; min-height: 34px; border-bottom: 1px solid rgb(0 0 0 / 5%); }
 .protocol-card dl > div:last-child { border-bottom: 0; }
 .protocol-card dt { color: var(--accent); font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(6px * var(--font-scale))); }
 .protocol-card dd { margin: 0; color: #827e7e; font-size: max(var(--minimum-font-size), calc(7px * var(--font-scale))); }
@@ -994,7 +1055,8 @@ button { color: inherit; }
 
 .ask-mark { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 20%, white); border-radius: 8px; color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, white); }
 .academy-ask > div { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
-.academy-ask label { color: #676366; font-size: max(var(--minimum-font-size), calc(7.5px * var(--font-scale))); font-weight: 660; }
+.academy-ask label { display: flex; align-items: baseline; gap: 7px; color: #676366; font-size: max(var(--minimum-font-size), calc(7.5px * var(--font-scale))); font-weight: 660; }
+.academy-ask label small { color: #9b9698; font-family: "SFMono-Regular", Consolas, monospace; font-size: max(var(--minimum-font-size), calc(5px * var(--font-scale))); font-weight: 600; }
 .academy-ask input { width: 100%; min-width: 0; padding: 2px 0; border: 0; outline: 0; color: #3d393b; background: transparent; font-size: max(var(--minimum-font-size), calc(10px * var(--font-scale))); }
 .academy-ask input::placeholder { color: #aaa6a8; }
 .ask-hints { display: flex; gap: 3px; }
@@ -1381,7 +1443,7 @@ textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%
 }
 
 @media (max-width: 650px) {
-  .campaign-list > button:nth-child(n+7) .campaign-name { display: none; }
+  .campaign-name { display: none; }
   .campaign-list > button { min-width: 0; }
   .academy-topbar { grid-template-columns: minmax(0, 1fr) auto; gap: 5px; padding-right: 8px; padding-left: 8px; }
   .mobile-academy-brand { display: none; }
@@ -1398,7 +1460,8 @@ textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%
   .dsl-content > p,
   .language-card,
   .carry-question,
-  .visual-gallery { margin-left: 0; }
+  .visual-gallery,
+  .expert-conversation { margin-left: 0; }
   .dsl-content > h2 { grid-template-columns: 23px minmax(0, 1fr); gap: 8px; font-size: max(var(--minimum-font-size), calc(15px * var(--font-scale))); }
   .dsl-content > p { font-size: max(var(--minimum-font-size), calc(11.5px * var(--font-scale))); }
   .language-card > header { grid-template-columns: 25px minmax(0, 1fr) auto; }
@@ -1410,6 +1473,9 @@ textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%
   .protocol-card { display: none; }
   .academy-ask .ask-mark { display: none; }
   .academy-ask { grid-template-columns: minmax(0, 1fr) 33px; }
+  .academy-ask label small { display: none; }
+  .answer-header { grid-template-columns: 32px minmax(0, 1fr); }
+  .answer-origin { grid-column: 2; justify-self: start; }
   .modal-backdrop { padding: 0; align-items: end; }
   .modal-shell,
   .modal-shell.wide { width: 100%; max-height: 92dvh; border-radius: 20px 20px 0 0; }

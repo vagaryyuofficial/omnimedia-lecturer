@@ -1,0 +1,72 @@
+appId: org.deep-language-expert.desktop
+productName: Deep Language Expert
+copyright: Copyright © Deep Language Expert contributors
+
+directories:
+  app: desktop
+  output: release
+  buildResources: build/desktop
+
+files:
+  - main.mjs
+  - local-server.mjs
+  - package.json
+
+extraResources:
+  - from: dist
+    to: app-dist
+    filter:
+      - "**/*"
+
+asar: true
+npmRebuild: false
+compression: normal
+artifactName: Deep-Language-Expert-${version}-${os}-${arch}.${ext}
+
+mac:
+  category: public.app-category.education
+  icon: build/desktop/icon.png
+  identity: null
+  gatekeeperAssess: false
+  target:
+    - dmg
+    - zip
+
+dmg:
+  artifactName: Deep-Language-Expert-${version}-macOS-${arch}.dmg
+  title: Deep Language Expert ${version}
+
+win:
+  icon: build/desktop/icon.png
+  target:
+    - nsis
+    - portable
+
+nsis:
+  artifactName: Deep-Language-Expert-${version}-Windows-${arch}-Setup.exe
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Deep Language Expert
+
+portable:
+  artifactName: Deep-Language-Expert-${version}-Windows-${arch}-Portable.exe
+
+linux:
+  category: Education
+  icon: build/desktop/icon.png
+  maintainer: Deep Language Expert contributors <vagaryyuofficial@users.noreply.github.com>
+  synopsis: Multilingual dictionary, knowledge and speech learning
+  description: Deep Language Expert is a bilingual multilingual dictionary, knowledge course and speech-learning application.
+  target:
+    - AppImage
+    - deb
+
+appImage:
+  artifactName: Deep-Language-Expert-${version}-Linux-${arch}.AppImage
+
+deb:
+  artifactName: Deep-Language-Expert-${version}-Linux-${arch}.deb
+
+publish: null

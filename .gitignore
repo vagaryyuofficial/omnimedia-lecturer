@@ -40,3 +40,6 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/release/
+/public/vendor/transformers.min.js
+/public/vendor/transformers.LICENSE.txt
